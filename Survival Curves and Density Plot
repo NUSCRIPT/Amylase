@@ -1,0 +1,64 @@
+Import 'EDW_basic_endpoints'
+df2_imp is from Table1 code file
+
+#Add columns for time from intubation to bal, duration of intubation, and time from first extubation to discharge
+#Remove patients who died
+df2_imp_extubation <- EDW_basic_endpoints[EDW_basic_endpoints$pt_study_id %in% c(df2_imp$pt_study_id),]
+Extubation_df <- merge(df2_imp, df2_imp_extubation, by=("pt_study_id"))
+Extubation_df$intubation_to_bal <- time_length(Extubation_df$bal_dt - Extubation_df$First_intub_start, unit="days")
+Extubation_df$first_intubation_duration <- time_length(Extubation_df$First_intub_stop - Extubation_df$First_intub_start, unit="days")
+Extubation_df$days_from_extubation_to_discharge <- time_length(Extubation_df$discharge_datetime.x - Extubation_df$First_intub_stop, unit="days") 
+Alive <- subset(Extubation_df, Mortality == '0')
+
+#Intubation Duration for Table1, this includes all patients regardless of in-hospital mortality
+#Remove patients where BAL falls outside of the first intubation start to stop duration, since we are looking to see the relationship between intubation duration and BAL amylase during that intubation
+Extubation_df2 <- Extubation_df[!Extubation_df$pt_study_id %in% c("1025", "1053", "1113", "1137", "1155", "1186", "1358", "1427", "1581", "1585", "1651", "1660", "1656", "1676"),]
+tapply(Extubation_df2$first_intubation_duration, Extubation_df2$group, summary)
+kruskal.test(first_intubation_duration ~ group, data=Extubation_df2)
+
+#Intubation Duration for patients who survived
+Alive2 <- Alive[!(Alive$patient_ir_id.x %in% c("18336002", "16044021", "17981313", "16799968", "16594289", "304511", "104876")),]
+fit <- survfit(Surv(first_intubation_duration) ~ group, data=Alive2)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = TRUE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Proportion of Patients Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"))
+
+##Cox proportional hazards with adjusting for confounders
+fit <- survfit(Surv(first_intubation_duration) ~ group, data=Alive2)
+cox <- coxph(Surv(first_intubation_duration) ~ group + edw_adm_age + bmi + norepinephrine_avg + gender + Cardiac_arrest, data = Alive2)
+summary(cox)
+
+#Sensitivity analyses using different BAL amylase thresholds
+Alive3 <- Alive2 %>% mutate(Amylase_250 = case_when(amylase <= 250 ~ "0-250", amylase > 250 ~ "> 250"))
+Alive3 <- Alive3 %>% mutate(Amylase_300 = case_when(amylase <= 300 ~ "0-300", amylase > 300 ~ "> 300"))
+Alive3 <- Alive3 %>% mutate(Amylase_400 = case_when(amylase <= 400 ~ "0-400", amylase > 400 ~ "> 400"))
+Alive3 <- Alive3 %>% mutate(Amylase_500 = case_when(amylase <= 500 ~ "0-500", amylase > 500 ~ "> 500"))
+
+fit <- survfit(Surv(first_intubation_duration) ~ Amylase_250, data=Alive3)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Proportion of Patients Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 250","Less Than 250")) 
+
+fit <- survfit(Surv(first_intubation_duration) ~ Amylase_300, data=Alive3)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p1 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE,  linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Proportion of Patients Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 300","Less Than 300")) 
+
+fit <- survfit(Surv(first_intubation_duration) ~ Amylase_400, data=Alive3)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p2 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Proportion of Patients Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 400","Less Than 400")) 
+
+fit <- survfit(Surv(first_intubation_duration) ~ Amylase_500, data=Alive3)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p3 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE,  linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Proportion of Patients Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 500","Less Than 500")) 
+
+splots <- list()
+splots[[1]] <- p
+splots[[2]] <- p2
+splots[[3]] <- p1
+splots[[4]] <- p3
+
+#HISTOGRAM AND DENSITY PLOTS
+z <- density_plot + scale_fill_brewer(palette="Dark2") + labs(x="Duration of Intubation (Days)", y="Density", title = "Density Plot of Intubation Duration") + theme(legend.position="bottom", axis.title.x = element_text(size=14), axis.text.y = element_text(size=14), axis.title.y = element_text(size=14), legend.title = element_text(size=14), legend.text = element_text(size=14) , plot.title=element_text(face="bold", hjust = 0.5), axis.text.x=element_text(size=14)) + guides(fill=guide_legend(title="Group"))
