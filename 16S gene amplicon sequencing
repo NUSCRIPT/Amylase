@@ -1,0 +1,476 @@
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+
+# Load in Data for Analysis
+df <- asv_table_cp_20240625$Amplicon
+
+# Filter out unassigned/eukaryote/chloroplast/mitochondria
+df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
+df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
+
+# Load metadata table (assigns each sample to lower 75th or upper 25th amylase percentile)
+amylase_metadata <- read.csv("amylase_metadata.csv")
+
+# Get the sample names from metadata and data file
+samples_in_df <- sample_names(df)
+samples_in_meta <- amylase_metadata[,1]
+
+# Determine common samples between data and metadata
+common_samples <- intersect(samples_in_df,samples_in_meta) 
+
+# Subset the data file to only include shared samples
+df_pruned <- subset_samples(df, sample_names(df) %in% common_samples)
+
+
+-----------------------------------------------------------
+RELATIVE ABUNDANCE STACKED BARPLOT
+-----------------------------------------------------------
+df <- asv_table_cp_20240625$Amplicon
+df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
+df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
+amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list.csv")
+samples_in_df <- sample_names(df)
+samples_in_meta <- amylase_metadata[,1]
+common_samples <- intersect(samples_in_df,samples_in_meta) 
+df_pruned <- subset_samples(df, sample_names(df) %in% common_samples)
+sample_data(df_pruned)$Group <- amylase_metadata$Amylase_Group
+ps <- filter_taxa(df_pruned, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
+df_rel_abund <- transform_sample_counts(ps, function(x) x / sum(x))
+phyloseq::plot_bar(df_rel_abund, fill = "Family") + geom_bar(aes(fill = Family), stat = "identity", position = "stack")  + scale_fill_viridis_d(option="magma") + labs(x = "", y = "Relative Abundance\n") + facet_wrap(~ Group, scales = "free") + theme(panel.background = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+df_melt <- psmelt(df_rel_abund)
+avg_composition <- df_melt %>% group_by(Group, Family) %>% summarize(Abundance = mean(Abundance))
+write.csv(avg_composition, "average_relative_abdunace.csv", row.names=FALSE)
+
+----------------------------------------------------------------------
+#CALCULATE DIVERSITY METRICS (both Shannon and Observed)
+----------------------------------------------------------------------
+diversity_metrics <- estimate_richness(df_pruned, measures = c("Shannon", "Observed"))
+diversity_metrics$Group <- amylase_metadata$Amylase  # Attach grouping metadata
+
+# ------------------------------------
+# Set Fixed y–axis Limits and p-value Label Positions
+# ------------------------------------
+obs_upper       <- 500      # Observed y-axis maximum
+obs_label_y     <- 480      # p-value label position for Observed plot
+shannon_upper   <- 5        # Shannon y-axis maximum
+shannon_label_y <- 4.8      # p-value label position for Shannon plot
+
+# Use a colorblind safe palette (Okabe & Ito) with no legend title.
+obs_fill_values <- c("<75th Percentile" = "#0072B2", ">75th Percentile" = "#D55E00")
+obs_color_values <- obs_fill_values  # same values for fill and color
+
+# ---------------------------
+# Observed Diversity Plot (Left)
+# ---------------------------
+p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Group)) +
+  geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 2, alpha = 0.9) +
+  scale_fill_manual(name = NULL, values = obs_fill_values) +  # No legend title
+  scale_color_manual(name = NULL, values = obs_color_values) +
+  labs(title = "Observed Diversity", y = "Number of Observed Taxa") +
+  scale_y_continuous(limits = c(0, obs_upper)) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    axis.text.x   = element_blank(),      # Remove x–tick labels
+    axis.ticks.x  = element_blank(),      # Remove x–ticks
+    axis.title.x  = element_blank(),
+    legend.position = "right"
+  ) +
+  stat_compare_means(
+    comparisons = list(c("<75th Percentile", ">75th Percentile")),
+    method      = "wilcox.test",
+    label       = "p.signif",
+    size        = 6,
+    label.y   = obs_label_y
+  )
+
+# ---------------------------
+# Shannon Diversity Plot (Right)
+# ---------------------------
+p_shannon <- ggplot(diversity_metrics, aes(x = Group, y = Shannon, fill = Group)) +
+  geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 2, alpha = 0.9) +
+  scale_fill_manual(name = NULL, values = obs_fill_values) +
+  scale_color_manual(name = NULL, values = obs_color_values) +
+  labs(title = "Shannon Diversity", y = "Shannon Diversity Index") +
+  scale_y_continuous(limits = c(0, shannon_upper)) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    axis.text.x   = element_blank(),      # Remove x–tick labels
+    axis.ticks.x  = element_blank(),      # Remove x–ticks
+    axis.title.x  = element_blank(),
+    legend.position = "right"
+  ) +
+  stat_compare_means(
+    comparisons = list(c("<75th Percentile", ">75th Percentile")),
+    method      = "wilcox.test",
+    label       = "p.signif",
+    size        = 6,
+    label.y   = shannon_label_y
+  )
+
+# ---------------------------
+# Prepare Main Panels Without Any Legends
+# ---------------------------
+p_observed_no_leg <- p_observed + theme(legend.position = "none")
+p_shannon_no_leg  <- p_shannon  + theme(legend.position = "none")
+
+# Arrange the two main plots side by side (ensuring equal widths)
+main_plots <- ggarrange(p_observed_no_leg, p_shannon_no_leg,
+                        ncol = 2, nrow = 1)
+
+# Create a common x–axis label grob (centered over the two panels)
+xlabel_grob <- text_grob("BAL Amylase", face = "bold", size = 16, hjust = 0.5)
+
+# Stack the main plots and the common x-axis label vertically
+main_with_xlabel <- ggarrange(main_plots, xlabel_grob, ncol = 1, heights = c(10, 1))
+
+# ---------------------------
+# Extract the Common Legend (Horizontal, with no title)
+# ---------------------------
+# Here we extract the legend from the Shannon plot with legend positioned at the bottom.
+common_legend <- get_legend(
+  p_shannon + theme(legend.position = "bottom",
+                    legend.box = "horizontal")
+)
+
+# ---------------------------
+# Combine the Main Panels (with the common x–axis label) with the Legend Beneath
+# ---------------------------
+final_plot <- ggarrange(main_with_xlabel, common_legend,
+                        ncol = 1, heights = c(10, 1))
+
+# Display the final plot
+print(final_plot)
+
+# Save the final plot to a file:
+ggsave("final_combined_alpha_diversity.png", plot = final_plot, width = 12, height = 8, dpi = 300)
+ggsave("final_combined_alpha_diversity.pdf", plot = final_plot, width = 12, height = 8, dpi = 300)
+
+
+
+# -----------------------------------------
+# Load necessary libraries
+# -----------------------------------------
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+#Open Maasln3 all results. Filter for abundance rows. Exclude taxa present in <13 samples (<10% Prevalence)
+# -----------------------------------------
+# Family-level data (Top 10)
+# -----------------------------------------
+maaslin_results <- tibble::tribble(
+  ~feature,              ~coef,  ~stderr,   ~qval_individual, ~N_not_zero,
+  "Propionibacteriaceae",  -3.84,  0.72,      0.014,            131,
+  "Burkholderiaceae",      -4.86,  1.13,      0.112,             40,
+  "Enterobacteriaceae",    -2.88,  0.67,      0.183,            129,
+  "Selenomonadaceae",       1.29,  0.45,      0.183,             28,
+  "Spirochaetaceae",        1.54,  0.53,      0.184,             17,
+  "Micrococcaceae",         1.57,  0.75,      0.183,            115,
+  "Moraxellaceae",         -2.62,  0.68,      0.183,            125,
+  "Bifidobacteriaceae",     1.18,  0.45,      0.183,             77,
+  "Campylobacteraceae",     1.15,  0.42,      0.183,             35,
+  "Lachnospiraceae",        1.15,  0.43,      0.183,             73
+)
+
+maaslin_results <- maaslin_results %>%
+  mutate(q_category = case_when(
+    qval_individual < 0.05 ~ "q < 0.05",
+    qval_individual < 0.2  ~ "0.1 <= q < 0.2",
+    qval_individual < 0.3  ~ "0.2 <= q < 0.3",
+    qval_individual < 0.4  ~ "0.3 <= q < 0.4",
+    qval_individual < 0.5  ~ "0.4 <= q < 0.5",
+    TRUE                   ~ "q >= 0.5"
+  ),
+  n_label = paste0("n = ", N_not_zero))
+
+p_fam <- ggplot(maaslin_results, aes(x = coef, y = reorder(feature, coef))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_point(aes(color = q_category), size = 4) +
+  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
+                width = 0.2, color = "gray50") +
+  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
+  ggtitle("Family Level") +
+  labs(x = "Coefficient (Effect Size)",
+       y = "Family",
+       color = "FDR Range") +
+  scale_color_manual(values = c("q < 0.05"     = "#E41A1C",
+                                "0.1 <= q < 0.2" = "#377EB8",
+                                "0.2 <= q < 0.3" = "#4DAF4A",
+                                "0.3 <= q < 0.4" = "#984EA3",
+                                "0.4 <= q < 0.5" = "#FF7F00",
+                                "q >= 0.5"       = "#999999")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 12)
+  )
+
+# -----------------------------------------
+# Genus-level data (Top 10)
+# -----------------------------------------
+maaslin_genera <- tibble::tribble(
+  ~feature,                ~coef,   ~stderr,   ~qval_individual, ~N_not_zero,
+  "Cutibacterium",         -3.85,   0.73,      0.029,            130,
+  "Escherichia-Shigella",   -2.75,   0.65,      0.210,            127,
+  "Lawsonella",             -3.17,   0.74,      0.210,            119,
+  "Rothia",                  1.66,   0.81,      0.210,             96,
+  "Acinetobacter",          -2.53,   0.67,      0.218,            125,
+  "Streptococcus",           1.01,   0.64,      0.317,            129,
+  "Fusobacterium",           1.09,   0.68,      0.336,             79,
+  "Kocuria",                 3.74,   1.82,      0.356,             32,
+  "Delftia",                -2.28,   0.73,      0.485,             94,
+  "Dialister",               1.58,   1.04,      0.485,             37
+)
+
+maaslin_genera <- maaslin_genera %>%
+  mutate(q_category = case_when(
+    qval_individual < 0.05 ~ "q < 0.05",
+    qval_individual < 0.2  ~ "0.1 <= q < 0.2",
+    qval_individual < 0.3  ~ "0.2 <= q < 0.3",
+    qval_individual < 0.4  ~ "0.3 <= q < 0.4",
+    qval_individual < 0.5  ~ "0.4 <= q < 0.5",
+    TRUE                   ~ "q >= 0.5"
+  ),
+  n_label = paste0("n = ", N_not_zero))
+
+p_gen <- ggplot(maaslin_genera, aes(x = coef, y = reorder(feature, coef))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_point(aes(color = q_category), size = 4) +
+  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
+                width = 0.2, color = "gray50") +
+  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
+  ggtitle("Genus Level") +
+  labs(x = "Coefficient (Effect Size)",
+       y = "Genus",
+       color = "FDR Range") +
+  scale_color_manual(values = c("q < 0.05"     = "#E41A1C",
+                                "0.1 <= q < 0.2" = "#377EB8",
+                                "0.2 <= q < 0.3" = "#4DAF4A",
+                                "0.3 <= q < 0.4" = "#984EA3",
+                                "0.4 <= q < 0.5" = "#FF7F00",
+                                "q >= 0.5"       = "#999999")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 12),
+    legend.position = "none"  # Remove legend from genus plot
+  )
+
+# -----------------------------------------
+# Combine the two plots side-by-side, with one shared legend (from the left panel)
+# -----------------------------------------
+combined_plot <- p_fam + p_gen +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+
+# -----------------------------------------
+# Add overall annotations with patchwork
+# -----------------------------------------
+final_plot <- combined_plot +
+  plot_annotation(
+    title = "Top 10 Most Differentially Abundant Taxa for BAL Amylase",
+    subtitle = "10% Prevalence Threshold",
+    caption = "Left of 0: Lower in >75th Percentile; Right of 0: Higher in >75th Percentile"
+  ) &
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 13, face = "italic"),
+    plot.caption = element_text(hjust = 0.5, size = 12)
+  )
+
+# Print the final combined plot
+print(final_plot)
+
+
+#Save the final plot to a file:
+ggsave("Diff_Abund_Top10.png", plot = final_plot, width = 13, height = 6, dpi = 300)
+ggsave("Diff_Abund_Top10.pdf", plot = final_plot, width = 13, height = 6, dpi = 300)
+
+
+# Load necessary libraries
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+library(vegan)
+
+# -------------------------------------------------------------
+# 1. Perform PCoA on Bray–Curtis Dissimilarities
+# -------------------------------------------------------------
+# Ensure yourmetadata (amylase_metadata) and df_pruned already loaded
+# are already loaded. Attach the grouping variable.
+# Load in Data for Analysis
+
+# Compute Bray–Curtis PCoA
+bray_pcoa <- ordinate(df_pruned, method = "PCoA", distance = "bray")
+
+# Extract percentage variance explained for PC1 and PC2
+pc1_var <- round(bray_pcoa$values$Relative_eig[1] * 100, 1)
+pc2_var <- round(bray_pcoa$values$Relative_eig[2] * 100, 1)
+
+# -------------------------------------------------------------
+# 2. Extract the PCoA Scores into a Data Frame
+# -------------------------------------------------------------
+pc_df <- as.data.frame(bray_pcoa$vectors)
+colnames(pc_df)[1:2] <- c("PC1", "PC2")
+pc_df$Group <- sample_data(df_pruned)$Group
+
+# -------------------------------------------------------------
+# 3. Determine Annotation Positions for the p–value Labels
+# -------------------------------------------------------------
+# For PC1:
+max_pc1 <- max(pc_df$PC1, na.rm = TRUE)
+min_pc1 <- min(pc_df$PC1, na.rm = TRUE)
+range_pc1 <- max_pc1 - min_pc1
+label_y_pc1 <- 0.4
+
+# For PC2:
+max_pc2 <- max(pc_df$PC2, na.rm = TRUE)
+min_pc2 <- min(pc_df$PC2, na.rm = TRUE)
+range_pc2 <- max_pc2 - min_pc2
+label_y_pc2 <- 0.4
+
+# -------------------------------------------------------------
+# 4. Create the Boxplots for PC1 and PC2 with Statistical Annotations
+# -------------------------------------------------------------
+# Define a colorblind-safe palette
+cb_palette <- c("<75th Percentile" = "#0072B2",
+                ">75th Percentile" = "#D55E00")
+
+# PC1 Boxplot (removing individual x axis ticks and labels)
+p_pc1 <- ggplot(pc_df, aes(x = Group, y = PC1, fill = Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 3, alpha = 0.8) +
+  scale_fill_manual(values = cb_palette) +
+  scale_color_manual(values = cb_palette) +
+  labs(title = paste0("PC1 (", pc1_var, "% variance)"),
+       y = "PC1 Score") +
+  scale_y_continuous(limits = c(-0.5, 0.5)) +
+  theme_minimal(base_size = 16) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        # Remove individual x-axis ticks, text, and title
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_compare_means(comparisons = list(c("<75th Percentile", ">75th Percentile")),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     label.y = label_y_pc1)
+
+# PC2 Boxplot (removing individual x axis ticks and labels)
+p_pc2 <- ggplot(pc_df, aes(x = Group, y = PC2, fill = Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 3, alpha = 0.8) +
+  scale_fill_manual(values = cb_palette) +
+  scale_color_manual(values = cb_palette) +
+  labs(title = paste0("PC2 (", pc2_var, "% variance)"),
+       y = "PC2 Score") +
+  scale_y_continuous(limits = c(-0.5, 0.5)) +
+  theme_minimal(base_size = 16) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        # Remove individual x-axis ticks, text, and title
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_compare_means(comparisons = list(c("<75th Percentile", ">75th Percentile")),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     label.y = label_y_pc2)
+
+# -------------------------------------------------------------
+# 5. Combine the Two Boxplots and Add a Common x-Axis Label
+# -------------------------------------------------------------
+# Arrange the two plots side by side without individual x-axis info
+combined_plots <- ggarrange(p_pc1, p_pc2, ncol = 2, nrow = 1)
+
+# Add a common x-axis label ("BAL Amylase"), centered beneath the two plots.
+final_plot <- annotate_figure(combined_plots,
+                              bottom = text_grob("BAL Amylase", face = "bold", size = 16, hjust = 0.5))
+
+# Display the final plot
+print(final_plot)
+
+# Save the final plot to a file:
+ggsave("PC1_PC2_boxplots_common_xlabel.png", plot = final_plot, width = 12, height = 6, dpi = 300)
+ggsave("PC1_PC2_boxplots_common_xlabel.pdf", plot = final_plot, width = 12, height = 6, dpi = 300)
+ggsave("PC1_PC2_boxplots_common_xlabel.tiff", plot = final_plot, width = 12, height = 6, dpi = 300)
+
+
+library(phyloseq)
+library(ggplot2)
+library(vegan)
+
+# -------------------------------
+# Prepare Data and Compute Distances
+# -------------------------------
+# Attach grouping metadata (if not already present)
+sample_data(df_pruned)$Group <- amylase_metadata$Amylase
+
+# Compute Bray–Curtis distance matrix and perform PCoA
+bray_dist <- phyloseq::distance(df_pruned, method = "bray")
+bray_pcoa <- ordinate(df_pruned, method = "PCoA", distance = "bray")
+
+# Extract sample data as a data frame for PERMANOVA
+sample_df <- as(sample_data(df_pruned), "data.frame")
+
+# -------------------------------
+# Run PERMANOVA
+# -------------------------------
+adonis_result <- adonis2(bray_dist ~ Group, data = sample_df)
+
+# Extract and format statistics from PERMANOVA
+F_val <- round(adonis_result$F[1], 2)
+R2_val <- round(adonis_result$R2[1], 2)
+p_val  <- adonis_result$`Pr(>F)`[1]
+perm_label <- paste0("PERMANOVA: F = ", F_val,
+                     ", R² = ", R2_val,
+                     ", p = ", format(p_val, digits = 2))
+
+# -------------------------------
+# Calculate Percentage Variance for Axis Labels
+# -------------------------------
+pc1 <- round(bray_pcoa$values$Relative_eig[1] * 100, 1)
+pc2 <- round(bray_pcoa$values$Relative_eig[2] * 100, 1)
+
+# -------------------------------
+# Create the PCoA Plot with Ellipses and Annotate PERMANOVA
+# -------------------------------
+p_pcoa <- plot_ordination(df_pruned, bray_pcoa, color = "Group", shape = "Group") +
+  geom_point(size = 3, alpha = 0.9) +
+  # Draw 95% confidence ellipses for each group
+  stat_ellipse(aes(color = Group), type = "norm",
+               linetype = "dashed", level = 0.95, size = 1) +
+  scale_color_manual(name = "BAL Amylase Percentile", 
+                     values = c("<75th Percentile" = "#0072B2",
+                                ">75th Percentile" = "#D55E00")) +
+  scale_shape_manual(name = "BAL Amylase Percentile", 
+                     values = c("<75th Percentile" = 16,
+                                ">75th Percentile" = 17)) +
+  labs(title = "Bray–Curtis Dissimilarity (PCoA)",
+       x = paste0("PC1 (", pc1, "%)"),
+       y = paste0("PC2 (", pc2, "%)")) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title   = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  ) +
+  # Add the PERMANOVA results as text in the top right corner
+  annotate("text", x = Inf, y = Inf, label = perm_label,
+           hjust = 1.1, vjust = 1.1, size = 3, fontface = "italic")
+
+# Display the plot
+print(p_pcoa)
+
+# Save the plot to a file:
+ggsave("bray_curtis_pcoa_with_PERMANOVA.png", plot = p_pcoa, width = 8, height = 6, dpi = 300)
+ggsave("bray_curtis_pcoa_with_PERMANOVA.pdf", plot = p_pcoa, width = 8, height = 6, dpi = 300)
