@@ -61,4 +61,5 @@ splots[[3]] <- p1
 splots[[4]] <- p3
 
 #HISTOGRAM AND DENSITY PLOTS
+density_plot <- ggplot(Extubation_df2, aes(x=intubation_duration, color=Intubationnumber)) + geom_density()
 z <- density_plot + scale_fill_brewer(palette="Dark2") + labs(x="Duration of Intubation (Days)", y="Density", title = "Density Plot of Intubation Duration") + theme(legend.position="bottom", axis.title.x = element_text(size=14), axis.text.y = element_text(size=14), axis.title.y = element_text(size=14), legend.title = element_text(size=14), legend.text = element_text(size=14) , plot.title=element_text(face="bold", hjust = 0.5), axis.text.x=element_text(size=14)) + guides(fill=guide_legend(title="Group"))
