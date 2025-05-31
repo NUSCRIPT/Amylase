@@ -1,0 +1,159 @@
+---
+title: "BAL Culture Boxplots and Heatmap"
+output: html_document
+date: "2025-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = TRUE)
+```
+
+##Boxplots comparing median BAL fluid amylase levels based on presence or absence of a microbe
+
+```{r, echo=TRUE}
+library(FSA)
+library(dplyr)
+library(stats)
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+library(tidyverse)
+library(ggpubr)
+library(lubridate)
+library(tibble)
+library(modelsummary)
+library(reshape)
+library(tidyr)
+library("survival")
+library("survminer")
+library(patchwork)
+library(fabricatr)
+library(mice)
+library(visdat)
+library(fabricatr)
+library(readxl)
+
+Boxplot <- df2_imp %>% mutate('Staphylococcus aureus' = case_when(organism_1_name == "Staphylococcus aureus" ~ "1", organism_2_name == "Staphylococcus aureus" ~ "1", organism_3_name == "Staphylococcus aureus" ~ "1", organism_4_name == "Staphylococcus aureus" ~ "1", organism_5_name == "Staphylococcus aureus" ~ "1"))
+Boxplot <- Boxplot %>% mutate(Corynebacterium = case_when(organism_1_name == "Corynebacterium" ~ "1", organism_2_name == "Corynebacterium" ~ "1", organism_3_name == "Corynebacterium" ~ "1", organism_4_name == "Corynebacterium" ~ "1", organism_5_name == "Corynebacterium" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Pseudomonas' = case_when(organism_1_name == "Pseudomonas" ~ "1", organism_2_name == "Pseudomonas" ~ "1", organism_3_name == "Pseudomonas" ~ "1", organism_4_name == "Pseudomonas" ~ "1", organism_5_name == "Pseudomonas" ~ "1"))
+Boxplot <- Boxplot %>% mutate(Yeast = case_when(organism_1_name == "Yeast" ~ "1", organism_2_name == "Yeast" ~ "1", organism_3_name == "Yeast" ~ "1", organism_4_name == "Yeast" ~ "1", organism_5_name == "Yeast" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Streptococcus' = case_when(organism_1_name == "Streptococcus" ~ "1", organism_2_name == "Streptococcus" ~ "1", organism_3_name == "Streptococcus" ~ "1", organism_4_name == "Streptococcus" ~ "1", organism_5_name == "Streptococcus" ~ "1"))
+Boxplot <- Boxplot %>% mutate('CONS' = case_when(organism_1_name == "Staphylococcus coagulase negative" ~ "1", organism_2_name == "Staphylococcus coagulase negative" ~ "1", organism_3_name == "Staphylococcus coagulase negative" ~ "1", organism_4_name == "Staphylococcus coagulase negative" ~ "1", organism_5_name == "Staphylococcus coagulase negative" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Escherichia' = case_when(organism_1_name == "Escherichia" ~ "1", organism_2_name == "Escherichia" ~ "1", organism_3_name == "Escherichia" ~ "1", organism_4_name == "Escherichia" ~ "1", organism_5_name == "Escherichia" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Klebsiella' = case_when(organism_1_name == "Klebsiella" ~ "1", organism_2_name == "Klebsiella" ~ "1", organism_3_name == "Klebsiella" ~ "1", organism_4_name == "Klebsiella" ~ "1", organism_5_name == "Klebsiella" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Enterococcus' = case_when(organism_1_name == "Enterococcus" ~ "1", organism_2_name == "Enterococcus" ~ "1", organism_3_name == "Enterococcus" ~ "1", organism_4_name == "Enterococcus" ~ "1", organism_5_name == "Enterococcus" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Candida' = case_when(organism_1_name == "Candida" ~ "1", organism_2_name == "Candida" ~ "1", organism_3_name == "Candida" ~ "1", organism_4_name == "Candida" ~ "1", organism_5_name == "Candida" ~ "1"))
+
+df <- Boxplot %>% select(amylase, `Staphylococcus aureus`, Corynebacterium, Pseudomonas, Yeast, Streptococcus, `CONS`, Escherichia, Klebsiella, Enterococcus)
+df.m <- melt(df, id.var = "amylase")
+df.m <- df.m %>% mutate(value = replace_na(value, "Absent"))
+df.m$value[df.m$value=="1"] <- "Present"
+p <- ggplot(data = df.m, aes(x=value, y=log(amylase))) + theme(legend.position ="none") + geom_boxplot(aes(fill=value)) + scale_fill_brewer(palette="BuGn") + labs(x="Organism on BAL culture", y="BAL Amylase on Log Scale") + theme(legend.position ="none", strip.text.x = element_text(size = 10, face="bold.italic"))
+
+p1 <- p + facet_wrap( ~ variable, scales="free") 
+p1 <- p1 + geom_signif(comparisons=list(c("Absent", "Present")), map_signif_level = TRUE, tip_length = 0, y_position = 9,  textsize = 5)
+print(p1)
+```
+
+##Correct for multiple comparisons
+
+```{r, echo=TRUE}
+Boxplot <- Boxplot %>% mutate(`Staphylococcus aureus` = replace_na(`Staphylococcus aureus`, "Absent"))
+Boxplot <- Boxplot %>% mutate(Corynebacterium = replace_na(Corynebacterium, "Absent"))
+Boxplot <- Boxplot %>% mutate(Pseudomonas = replace_na(Pseudomonas, "Absent"))
+Boxplot <- Boxplot %>% mutate(Yeast = replace_na(Yeast, "Absent"))
+Boxplot <- Boxplot %>% mutate(Streptococcus = replace_na(Streptococcus, "Absent"))
+Boxplot <- Boxplot %>% mutate(`CONS` = replace_na(`CONS`, "Absent"))
+Boxplot <- Boxplot %>% mutate(Escherichia = replace_na(Escherichia, "Absent"))
+Boxplot <- Boxplot %>% mutate(Klebsiella = replace_na(Klebsiella, "Absent"))
+Boxplot <- Boxplot %>% mutate(Enterococcus = replace_na(Enterococcus, "Absent"))
+
+tapply(Boxplot$amylase, Boxplot$`Staphylococcus aureus`, summary)
+kruskal.test(amylase ~ `Staphylococcus aureus`, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Corynebacterium, summary)
+kruskal.test(amylase ~ Corynebacterium, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Pseudomonas, summary)
+kruskal.test(amylase ~ Pseudomonas, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Yeast, summary)
+kruskal.test(amylase ~ Yeast, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Streptococcus, summary)
+kruskal.test(amylase ~ Streptococcus, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$`CONS`, summary)
+kruskal.test(amylase ~ `CONS`, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Escherichia, summary)
+kruskal.test(amylase ~ Escherichia, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Klebsiella, summary)
+kruskal.test(amylase ~ Klebsiella, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Enterococcus, summary)
+kruskal.test(amylase ~ Enterococcus, data = Boxplot)
+
+#Manually copy and paste the p values generated above and correct for multiple comparisons
+p_values <- c(0.03131, 4.675e-05, 0.0655, 8.037e-05, 0.0004524, 0.0005806, 0.9306, 0.1705, 0.0009606)
+p_adjusted <- p.adjust(p_values, method = "bonferroni")
+print(p_adjusted)
+```
+
+##Enter adjusted p values into text
+Staphylococcus aureus p = 0.28179000
+Corynebacterium p = 0.00042075
+Pseudomonas p = 0.58950000
+Yeast p = 0.00072333
+Streptococcus p = 0.00407160
+CONS p = 0.00522540
+Escherichia p = 1.00000000
+Klebsiella p = 1.00000000
+Enterococcus p = 0.00864540
+
+##Create heatmap and combine with faceted boxplots (Figure 2)
+```{r, echo=FALSE}
+bacteria <- df2_imp %>% select(organism_1_name, organism_2_name, organism_3_name, organism_4_name, organism_5_name, organism_6_name, Quartile)
+df.m <- melt(bacteria, id.var = "Quartile")
+df.m$Quartile <- as.factor(df.m$Quartile)
+df.m <- subset(df.m, value != 'NA')
+p2 <- df.m %>% count(value, Quartile, .drop=FALSE) %>% ggplot(aes(x=Quartile, y=value, fill=n)) +geom_tile() + geom_text(aes(label = n), color = "white", size = 3)+ theme_minimal() + labs(x = "BAL Amylase Quartile", y = "Organism from BAL culture") + scale_fill_viridis(discrete=FALSE, name="Count") + theme_ipsum() + theme(plot.title = element_text(size=14, face="bold"), axis.title.x = element_text(size=14, hjust=0.5), axis.text.y = element_text(face ="italic"), axis.title.y = element_text(size=14, hjust=0.5),  axis.title=element_text(size=14,face="bold"))
+
+#To combine Heatmap and Boxplots into one Figure
+ggarrange(p2, p1, labels = c("A", "B"), ncol = 2, nrow = 1)
+
+```
+
+#Analyze demographics using BAL amylase as a continuous variable
+
+```{r, echo=FALSE}
+df2_imp$Quartile <- as.factor(df2_imp$Quartile)
+a <- ggplot(df2_imp, aes(x=log(amylase), y= log(bal_wbc_count))) + scale_color_viridis_d()
+a <- a + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 12, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL WBC Count") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+b <- ggplot(df2_imp, aes(x=log(amylase), y=edw_adm_age)) + scale_color_viridis_d()
+b <- b + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 105, size=4) + xlab("Log(BAL Amylase)") + ylab("Age") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12))
+
+c <- ggplot(df2_imp, aes(x=log(amylase), y= bal_pct_neutro)) + scale_color_viridis_d()
+c <- c + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 110, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL % Neutrophils") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+d <- ggplot(df2_imp, aes(x=log(amylase), y= bmi)) + scale_color_viridis_d()
+d <- d + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 75, size=4) + xlab("Log(BAL Amylase)") + ylab("Body Mass Index") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12), legend.position='none')
+
+e <- ggplot(df2_imp, aes(x=gender, y=log(amylase))) + geom_boxplot(aes(fill=gender)) + scale_fill_viridis_d()
+e <- e + xlab("Gender") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Male", "Female")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+f <- ggplot(df2_imp, aes(x =Cardiac_arrest, y=log(amylase))) + geom_boxplot(aes(fill=Cardiac_arrest)) + scale_fill_viridis_d()
+f <- f + xlab("Cardiac Arrest Prior to BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+g <- ggplot(df2_imp, aes(x=Culture_negative, y=log(amylase))) + geom_boxplot(aes(fill=Culture_negative)) + scale_fill_viridis_d()
+g <- g + xlab("Culture Negative BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+h <- ggplot(Amylase_df_abx, aes(x=Antibiotics, y=log(amylase))) + geom_boxplot(aes(fill=Antibiotics)) + scale_fill_viridis_d()
+h <- h + xlab("Receipt of Anaerobic Antibiotics Within 7 Days of BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+ggarrange(b, d, a, c, e, f, g, h,  labels = c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 2, nrow = 4)
+
+```

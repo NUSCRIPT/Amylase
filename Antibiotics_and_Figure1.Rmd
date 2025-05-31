@@ -1,0 +1,97 @@
+---
+title: "Antibiotics"
+output: html_document
+date: "2025-05-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+##Grouping each patient by antibiotic receipt
+
+Start from the imputed dataframe (df2_imp) generated from the Table1.Rmd.
+
+If a patient received any anti-anaerobic therapy within 7 days after the BAL they are considered to have received anaerobic antibiotic therapy.
+
+```{r, echo = FALSE}
+
+library(dplyr)
+library(stats)
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+library(tidyverse)
+library(ggpubr)
+library(stats)
+library(lubridate)
+library(reshape2)
+library(patchwork)
+
+#Find patients in Amylase cohort who received anaerobic abx within 7d from BAL
+Received_antibiotics_d7 <- df2_imp[df2_imp$patient_ir_id %in% c(Antibiotics$irid),]
+Received_antibiotics_d7 <- merge(Received_antibiotics_d7, Antibiotics, by.x = "patient_ir_id", by.y = "irid")
+Received_antibiotics_d7$Days_from_BALtoabx <- time_length(Received_antibiotics_d7$administration_date - Received_antibiotics_d7$bal_dt, unit="days")
+Received_antibiotics_d7 <- subset(Received_antibiotics_d7, Days_from_BALtoabx <= 7)
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Piptazo = case_when(base_medication_name == 'Piperacillin Tazobactam' ~ "1"))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Piptazo = ifelse(is.na(Piptazo), 0, Piptazo))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Meropenem = case_when(base_medication_name == 'Meropenem' ~ "1"))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Meropenem = ifelse(is.na(Meropenem), 0, Meropenem))
+
+#Find patients in Amylase cohort who DID NOT receive anaerobic abx within 7d from BAL
+No_antibiotics_d7 <- df2_imp[!df2_imp$patient_ir_id %in% c(Received_antibiotics_d7$patient_ir_id),]
+
+#Find patients in Amylase cohort who DID receive anaerobic abx within 7d from BAL
+Antibiotics_d7 <- df2_imp[df2_imp$patient_ir_id %in% c(Received_antibiotics_d7$patient_ir_id),]
+
+#Add an antibiotics column
+No_antibiotics_d7$Antibiotics <- c("No")
+Antibiotics_d7$Antibiotics <- c("Yes")
+
+#Merge Amylase_df patients with and without antibiotics
+Amylase_df_abx <- rbind(No_antibiotics_d7, Antibiotics_d7)
+
+#Find Number of Patients Who Did and Did Not Receive Antibiotics
+table(Amylase_df_abx$Antibiotics, Amylase_df_abx$group)
+
+#Proportions Barplot for AntibioAntibiotics received for each quartile(1 count = 1 dose in a day)
+p <- ggplot(Received_antibiotics_d7, aes(x=group, fill=base_medication_name)) + geom_bar(stat = 'count', position = 'fill')
+p <- p + scale_fill_viridis_d() + theme_bw() + labs(fill= "Antibiotic Name", x="", y="Percentage", title="Antibiotics Received Within 7 Days of BAL") + theme(axis.text.x=element_text(size=14), axis.title.y=element_text(size=14), legend.position = "bottom", legend.text = element_text(size=14), legend.title = element_text(size=14), plot.title=element_text(hjust=0.5))
+
+print(p)
+```
+
+##Evaluate significant demographics using BAL amylase as a continuous variable 
+```{r, echo=FALSE}
+df2_imp$Quartile <- as.factor(df2_imp$Quartile)
+a <- ggplot(df2_imp, aes(x=log(amylase), y= log(bal_wbc_count))) + scale_color_viridis_d()
+a <- a + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 12, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL WBC Count") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+b <- ggplot(df2_imp, aes(x=log(amylase), y=edw_adm_age)) + scale_color_viridis_d()
+b <- b + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 105, size=4) + xlab("Log(BAL Amylase)") + ylab("Age") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12))
+
+c <- ggplot(df2_imp, aes(x=log(amylase), y= bal_pct_neutro)) + scale_color_viridis_d()
+c <- c + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 110, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL % Neutrophils") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+d <- ggplot(df2_imp, aes(x=log(amylase), y= bmi)) + scale_color_viridis_d()
+d <- d + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 75, size=4) + xlab("Log(BAL Amylase)") + ylab("Body Mass Index") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12), legend.position='none')
+
+e <- ggplot(df2_imp, aes(x=gender, y=log(amylase))) + geom_boxplot(aes(fill=gender)) + scale_fill_viridis_d()
+e <- e + xlab("Gender") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Male", "Female")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+f <- ggplot(df2_imp, aes(x =Cardiac_arrest, y=log(amylase))) + geom_boxplot(aes(fill=Cardiac_arrest)) + scale_fill_viridis_d()
+f <- f + xlab("Cardiac Arrest Prior to BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+g <- ggplot(df2_imp, aes(x=Culture_negative, y=log(amylase))) + geom_boxplot(aes(fill=Culture_negative)) + scale_fill_viridis_d()
+g <- g + xlab("Culture Negative BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+h <- ggplot(Amylase_df_abx, aes(x=Antibiotics, y=log(amylase))) + geom_boxplot(aes(fill=Antibiotics)) + scale_fill_viridis_d()
+h <- h + xlab("Receipt of Anaerobic Antibiotics Within 7 Days of BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
+
+Figure1 <- ggarrange(b, d, a, c, e, f, g, h,  labels = c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 2, nrow = 4))
+
+print(Figure1)
+
+```
+

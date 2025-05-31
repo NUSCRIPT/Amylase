@@ -1,0 +1,117 @@
+---
+title: "Time_to_Event_Curves"
+output: html_document
+date: "2025-05-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Generate time-to-event curves for the time to extubation
+
+```{r, echo=FALSE}
+#Add columns for time from intubation to bal, duration of intubation, and time from extubation to discharge
+df2_imp_extubation <- EDW_basic_endpoints[EDW_basic_endpoints$pt_study_id %in% c(df2_imp$pt_study_id),]
+Extubation_df <- merge(df2_imp, df2_imp_extubation, by=("pt_study_id"))
+
+#BALs from first intubation 
+Extubation_df2 <- Extubation_df
+Extubation_df2$intubation_duration <- time_length(Extubation_df2$First_intub_stop - Extubation_df2$First_intub_start, unit="days")
+Extubation_df2$intubation_to_bal <- time_length(Extubation_df2$bal_dt - Extubation_df2$First_intub_start, unit="days")
+Extubation_df2$extubation_to_discharge <- time_length(Extubation_df2$discharge_datetime.x - Extubation_df2$First_intub_stop, unit="days")
+Extubation_df3 <- Extubation_df2[!Extubation_df2$pt_study_id %in% c("1025", "1053", "1103", "1113", "1137", "1155", "1186", "1358", "1427", "1581", "1585", "1651", "1660", "1656", "1676"),]
+
+#Bals that were done during a second or third intubation
+Second_intubation <- Extubation_df[Extubation_df$pt_study_id %in% c("1053", "1103", "1113", "1137", "1155", "1186", "1358", "1581", "1585", "1660", "1656", "1676"),]
+Third_intubation <- Extubation_df[Extubation_df$pt_study_id %in% c("1025", "1427", "1651"),]
+
+Second_intubation$intubation_duration <- time_length(Second_intubation$Second_intub_stop - Second_intubation$Second_intub_start, unit="days")
+Third_intubation$intubation_duration <- time_length(Third_intubation$Third_intub_stop - Third_intubation$Third_intub_start, unit="days")
+
+Second_intubation$intubation_to_bal <- time_length(Second_intubation$bal_dt - Second_intubation$Second_intub_start, unit="days")
+Third_intubation$intubation_to_bal <- time_length(Third_intubation$bal_dt - Third_intubation$Third_intub_start, unit="days")
+
+Second_intubation$extubation_to_discharge <- time_length(Second_intubation$discharge_datetime.x - Second_intubation$Second_intub_stop, unit="days")
+Third_intubation$extubation_to_discharge <- time_length(Third_intubation$discharge_datetime.x - Third_intubation$Third_intub_stop, unit="days")
+
+Extubation_df3$Intubationnumber <- c("First Intubation")
+Second_intubation$Intubationnumber <- c("Second Intubation")
+Third_intubation$Intubationnumber <- c("Third Intubation")
+
+#Combine all samples 
+All_samples <- rbind(Extubation_df3, Second_intubation, Third_intubation)
+
+#Subset patients who survived the hospitalization
+All_samples_alive <- subset(All_samples, Mortality == 0)
+
+#Generate density plot
+density_plot <- ggplot(All_samples_alive, aes(x=intubation_duration, fill=group)) + geom_density(alpha=0.4)
+dns_plot <- density_plot + scale_fill_brewer(palette="Dark2") + labs(x="Days of Intubation (For Intubation Associated with the BAL)", y="Density", title = "Density Plot of Intubation Duration") + theme(legend.position="bottom", axis.title.x = element_text(size=14), axis.text.y = element_text(size=14), axis.title.y = element_text(size=14), legend.title = element_text(size=14), legend.text = element_text(size=14) , plot.title=element_text(face="bold", hjust = 0.5), axis.text.x=element_text(size=14)) + guides(fill=guide_legend(title="Group"))
+
+print(dns_plot)
+```
+
+##Time to Event Curves
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Generate time-to-event curve for time to extubation
+fit <- survfit(Surv(intubation_duration) ~ group, data=All_samples_alive)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+km_curve <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = TRUE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"))
+
+print(km_curve)
+```
+
+## Log rank test for p value for KM curve, Cox proportional hazards
+
+```{r, echo=FALSE}
+#Get log rank test p value from km curve
+surv_pvalue(fit, combine = TRUE, get_coord = TRUE)
+
+##Cox proportional hazards with adjusting for confounders
+fit <- survfit(Surv(intubation_duration) ~ group, data=All_samples_alive)
+cox <- coxph(Surv(intubation_duration) ~ group + edw_adm_age + bmi + norepinephrine_avg + gender + Cardiac_arrest, data = All_samples_alive)
+summary(cox)
+```
+
+#Sensitivity analysis using different BAL amylase thresholds
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Sensitivity analyses using different BAL amylase thresholds
+Sens_analysis <- All_samples_alive %>% mutate(Amylase_200 = case_when(amylase <= 200 ~ "0-200", amylase > 200 ~ "> 200"))
+Sens_analysis <- Sens_analysis %>% mutate(Amylase_400 = case_when(amylase <= 400 ~ "0-400", amylase > 400 ~ "> 400"))
+Sens_analysis <- Sens_analysis %>% mutate(Amylase_500 = case_when(amylase <= 500 ~ "0-500", amylase > 500 ~ "> 500"))
+
+fit <- survfit(Surv(intubation_duration) ~ Amylase_200, data=Sens_analysis)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 200","Less Than 200")) 
+
+fit <- survfit(Surv(intubation_duration) ~ Amylase_400, data=Sens_analysis)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p2 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 400","Less Than 400")) 
+
+fit <- survfit(Surv(intubation_duration) ~ Amylase_500, data=Sens_analysis)
+print(fit)
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+p3 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE,  linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 500","Less Than 500")) 
+
+splots <- list()
+splots[[1]] <- p
+splots[[2]] <- p2
+splots[[3]] <- p3
+
+arrange_ggsurvplots(splots, print = TRUE, ncol = 3, nrow = 1, risk.table.height = 0.4)
+```
+
+## Correct for multiple comparisons
+Get p values from the log rank tests above and correct using Bonferroni correction.
+```{r}
+p_values <- c(0.01, 0.35, 0.0089, 0.0033)
+p_adjusted <- p.adjust(p_values, method = "bonferroni")
+print(p_adjusted)
+```
+
