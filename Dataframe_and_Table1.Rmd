@@ -35,6 +35,7 @@ library(mice)
 library(visdat)
 library(fabricatr)
 library(readxl)
+library(gtsummary)
 
 #Select BAL samples with an amylase value
 CDdataset <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/CDdataset.xlsx")
@@ -72,6 +73,8 @@ df <- df %>% mutate(group = case_when(Quartile <= 3 ~ "Low-Intermediate BAL Amyl
 #Subset df for Table 1 Data
 df2 <- df %>% select(patient_ir_id, day_of_hospitalization, day_of_intubation, bal_dt, pt_study_id, norepinephrine_avg, edw_adm_age, bmi, gender, ethnicity, pt_immunocomp, smoking_history, myocardial_infarction, congestive_heart_failure, cerebrovascular_disease, dementia, peptic_ulcer_disease, liver_disease, diabetes, hemiplagia_or_paraplegia, charlson_comorbidity_index, hospital_los_days, total_icu_los_days, cumulative_intubation_days, discharge_datetime, discharge_disposition_name, Mortality, temperature_max, norepinephrine_avg, fio2_avg, po2_fio2_ratio_avg, wbc_max, amylase, bal_wbc_count, bal_pct_neutro, gram_stain_report_organisms, organism_1_quantity, organism_1_name, organism_2_quantity, organism_2_name, organism_3_quantity, organism_3_name, organism_4_quantity, organism_4_name, organism_5_quantity, organism_5_name, organism_6_quantity, organism_6_name, episode_category, episode_etiology, Quartile, group)
 
+df2$po2_fio2_ratio_avg <- as.numeric(df2$po2_fio2_ratio_avg)
+
 ```
 
 
@@ -84,7 +87,7 @@ vis_miss(df2)
 
 ## Impute missing data 
 First replace 'NA' in the BAL culture columns with the text 'NA' since there is nothing to impute in these cells, NA means no growth/normal flora
-```{r, echo=TRUE}
+```{r, echo=FALSE}
 df2[35:49][is.na(df2[35:49])] <- 'NA'
 df2_imp <- mice(df2,m=5,maxit=50,meth="cart",seed=500)
 df2_imp <- complete(df2_imp, 1)
@@ -246,15 +249,16 @@ df2_imp <- df2_imp %>% mutate(Polymicrobial = case_when(organism_1_name != 'NA' 
 df2_imp$Polymicrobial <- df2_imp$Polymicrobial %>% replace_na('No')
 
 #Generate Table 1
-df2_imp %>% select(group, amylase, edw_adm_age, bmi, gender, charlson_comorbidity_index, Cardiac_arrest, pt_immunocomp, peptic_ulcer_disease, cerebrovascular_disease, hemiplagia_or_paraplegia, dementia, episode_category, Culture_negative, Polymicrobial, wbc_max, bal_wbc_count, bal_pct_neutro, hospital_los_days, total_icu_los_days, Mortality) %>% tbl_summary(by= group, statistic = list(all_categorical() ~ "{n} / {N} ({p}%)")) %>% add_p() %>% add_q()
+Table1 <- df2_imp
+Table1 %>% select(group, amylase, edw_adm_age, bmi, gender, charlson_comorbidity_index, Cardiac_arrest, pt_immunocomp, peptic_ulcer_disease, cerebrovascular_disease, hemiplagia_or_paraplegia, dementia, episode_category, Culture_negative, Polymicrobial, wbc_max, bal_wbc_count, bal_pct_neutro, hospital_los_days, total_icu_los_days, Mortality) %>% tbl_summary(by= group, statistic = list(all_categorical() ~ "{n} / {N} ({p}%)")) %>% add_p() %>% add_q()
+```
 
+```{r, echo=FALSE}
 #Find cases where Gram stain is positive for culture negatives
 #The output is not significant and not corrected for multiple comparisons
-cx_neg <- df2_imp %>% filter(is.na(organism_1_name))
+cx_neg <- Table1 %>% filter(is.na(organism_1_name))
 cx_neg %>% count(gram_stain_report_organisms, group, sort = TRUE)
 gs_pos <- data.frame("gs_pos" = c(19,7), "No_gs_pos" = c(233,39), row.names = c("Low-Intermediate", "High"))
 fisher.test(gs_pos)
-
 ```
-
 
