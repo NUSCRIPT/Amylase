@@ -125,35 +125,3 @@ p2 <- df.m %>% count(value, Quartile, .drop=FALSE) %>% ggplot(aes(x=Quartile, y=
 ggarrange(p2, p1, labels = c("A", "B"), ncol = 2, nrow = 1)
 
 ```
-
-#Analyze demographics using BAL amylase as a continuous variable
-
-```{r, echo=FALSE}
-df2_imp$Quartile <- as.factor(df2_imp$Quartile)
-a <- ggplot(df2_imp, aes(x=log(amylase), y= log(bal_wbc_count))) + scale_color_viridis_d()
-a <- a + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 12, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL WBC Count") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
-
-b <- ggplot(df2_imp, aes(x=log(amylase), y=edw_adm_age)) + scale_color_viridis_d()
-b <- b + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 105, size=4) + xlab("Log(BAL Amylase)") + ylab("Age") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12))
-
-c <- ggplot(df2_imp, aes(x=log(amylase), y= bal_pct_neutro)) + scale_color_viridis_d()
-c <- c + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 110, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL % Neutrophils") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
-
-d <- ggplot(df2_imp, aes(x=log(amylase), y= bmi)) + scale_color_viridis_d()
-d <- d + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 75, size=4) + xlab("Log(BAL Amylase)") + ylab("Body Mass Index") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12), legend.position='none')
-
-e <- ggplot(df2_imp, aes(x=gender, y=log(amylase))) + geom_boxplot(aes(fill=gender)) + scale_fill_viridis_d()
-e <- e + xlab("Gender") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Male", "Female")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
-
-f <- ggplot(df2_imp, aes(x =Cardiac_arrest, y=log(amylase))) + geom_boxplot(aes(fill=Cardiac_arrest)) + scale_fill_viridis_d()
-f <- f + xlab("Cardiac Arrest Prior to BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
-
-g <- ggplot(df2_imp, aes(x=Culture_negative, y=log(amylase))) + geom_boxplot(aes(fill=Culture_negative)) + scale_fill_viridis_d()
-g <- g + xlab("Culture Negative BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
-
-h <- ggplot(Amylase_df_abx, aes(x=Antibiotics, y=log(amylase))) + geom_boxplot(aes(fill=Antibiotics)) + scale_fill_viridis_d()
-h <- h + xlab("Receipt of Anaerobic Antibiotics Within 7 Days of BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4)
-
-ggarrange(b, d, a, c, e, f, g, h,  labels = c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 2, nrow = 4)
-
-```
