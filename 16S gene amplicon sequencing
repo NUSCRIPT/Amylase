@@ -50,7 +50,7 @@ df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
 df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
 # Load metadata (assigns each sample to high or low-intermediate amylase group)
-amylase_metadata <- read.csv("Amylase_metadata_list060625.csv")
+amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv")
 
 # -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
