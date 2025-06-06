@@ -10,6 +10,7 @@ library(phyloseq)
 library(ggplot2)
 library(ggpubr)
 library(dplyr)
+library(decontam)
 
 # -----------------------------------------
 # Step 2: Load and Filter Data and Metadata Files
@@ -49,7 +50,7 @@ df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
 df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
 # Load metadata (assigns each sample to high or low-intermediate amylase group)
-amylase_metadata <- read.csv("amylase_metadata_list.csv")
+amylase_metadata <- read.csv("Amylase_metadata_list060625.csv")
 
 # -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
@@ -90,7 +91,7 @@ p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Grou
   geom_jitter(aes(color = Group), width = 0.15, size = 2, alpha = 0.9) +
   scale_fill_manual(name = NULL, values = obs_fill_values) +  # No legend title
   scale_color_manual(name = NULL, values = obs_color_values) +
-  labs(title = "Observed Diversity", y = "Number of Observed Taxa") +
+  labs(title = "Observed Diversity", y = "Num. Observed Taxa") +
   scale_y_continuous(limits = c(0, obs_upper)) +
   theme_minimal(base_size = 16) +
   theme(
@@ -105,7 +106,7 @@ p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Grou
     method      = "wilcox.test",
     label       = "p.signif",
     size        = 6,
-    label.y   = obs_label_y
+    label.y   = 400
   )
 
 # ---------------------------
@@ -131,7 +132,7 @@ p_shannon <- ggplot(diversity_metrics, aes(x = Group, y = Shannon, fill = Group)
     method      = "wilcox.test",
     label       = "p.signif",
     size        = 6,
-    label.y   = shannon_label_y
+    label.y   = 5
   )
 
 # ---------------------------
