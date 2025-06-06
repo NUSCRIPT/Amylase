@@ -1,27 +1,20 @@
 # -----------------------------------------
-#This Script Runs Maaslin3 Analysis
-  #Requires"asv_table_cp_20240625.rds" and "amylase_metadata_list.csv"
+#This Script Calculates, Compares, and Plots Alpha Diversity (Observed and Shannon)
+    #Requires "asv_table_cp_20240625.rds" (amplicon data) and "amylase_metadata_list.csv" (metadata)
 # -----------------------------------------
 
 # -----------------------------------------
-# Step 1: Install and load necessary libraries
+# Step 1: Load necessary libraries
 # -----------------------------------------
-if (!require("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-BiocManager::install("biobakery/maaslin3")
-for (lib in c('maaslin3', 'dplyr', 'ggplot2', 'knitr', 'kableExtra')) {suppressPackageStartupMessages(require(lib, character.only = TRUE))}
-BiocManager::install("decontam")
-install.packages("readr")
-library(readr)
-library(maaslin3)
-library(decontam)
+library(phyloseq)
+library(ggplot2)
 library(ggpubr)
 library(dplyr)
 
 # -----------------------------------------
-# Step 2: Load and Decontam Data and Metadata Files
+# Step 2: Load and Filter Data and Metadata Files
 # -----------------------------------------
-# Load in Amplicon Data
+# Load amplicon data
 df <- readRDS("asv_table_cp_20240625.rds")
 df <- asv_table_cp_20240625$Amplicon
 
@@ -33,14 +26,20 @@ decontaminate_phyloseq <- function(ps4decontam){
   sample_data(ps4decontam)$is.neg <- sample_data(ps4decontam)$Sample_or_Control ==
     "Control-Sample"
   # Get dataframe of contaminants
-  contamdf.prev05 <- isContaminant(ps4decontam, method="prevalence", neg="is.neg", threshold=0.5)
+  contamdf.prev05 <- isContaminant(
+    ps4decontam,
+    method="prevalence",
+    neg="is.neg",
+    threshold=0.5
+  )
   print(table(contamdf.prev05$contaminant))
   print(filter(contamdf.prev05, contaminant == TRUE) %>% rownames())
   # Prune contaminant taxa at the threshold .05 (> prevalence in control=contaminant)
   final_biom <- prune_taxa(!contamdf.prev05$contaminant, ps4decontam)
   print(ntaxa(final_biom) / ntaxa(ps4decontam))
   # final_biom <- subset_samples(final_biom, sample.type != "zymo-control")
-  return(final_biom)}
+  return(final_biom)
+}
 
 #Decontam
 df <- decontaminate_phyloseq(df)
@@ -49,8 +48,8 @@ df <- decontaminate_phyloseq(df)
 df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
 df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
-# Load metadata table (assigns each sample to lower 75th or upper 25th amylase percentile)
-amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv")
+# Load metadata (assigns each sample to high or low-intermediate amylase group)
+amylase_metadata <- read.csv("amylase_metadata_list.csv")
 
 # -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
@@ -65,38 +64,257 @@ common_samples <- intersect(samples_in_df,samples_in_meta)
 # Subset the data file to only include shared samples
 df_pruned <- subset_samples(df, sample_names(df) %in% common_samples)
 
+# -----------------------------------------
+# Step 4: Calculate diversity metrics (Shannon and Observed)
+# -----------------------------------------
+diversity_metrics <- estimate_richness(df_pruned, measures = c("Shannon", "Observed"))
+diversity_metrics$Group <- amylase_metadata$Amylase  # Attaches Amylase Grouping
 
------------------------------------------------------------
-RELATIVE ABUNDANCE STACKED BARPLOT
------------------------------------------------------------
+# ------------------------------------
+# Step 5: Set y axis upper limits and p value label position
+# ------------------------------------
+obs_upper       <- 500      # observed y-axis maximum
+obs_label_y     <- 480      # p-value label position for Observed plot
+shannon_upper   <- 6      # Shannon y-axis maximum
+shannon_label_y <- 5.79      # p-value label position for Shannon plot
 
+# Sets color palette (colorblind friendly)
+obs_fill_values <- c("Low-Intermediate" = "#0072B2", "High" = "#D55E00")
+obs_color_values <- obs_fill_values  # same values for fill and color
 
+# ---------------------------
+# Step 6: Make Observed Diversity Plot
+# ---------------------------
+p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Group)) +
+  geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 2, alpha = 0.9) +
+  scale_fill_manual(name = NULL, values = obs_fill_values) +  # No legend title
+  scale_color_manual(name = NULL, values = obs_color_values) +
+  labs(title = "Observed Diversity", y = "Number of Observed Taxa") +
+  scale_y_continuous(limits = c(0, obs_upper)) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    axis.text.x   = element_blank(),      # Remove x–tick labels
+    axis.ticks.x  = element_blank(),      # Remove x–ticks
+    axis.title.x  = element_blank(),
+    legend.position = "right"
+  ) +
+  stat_compare_means(
+    comparisons = list(c("Low-Intermediate", "High")),
+    method      = "wilcox.test",
+    label       = "p.signif",
+    size        = 6,
+    label.y   = obs_label_y
+  )
+
+# ---------------------------
+# Step 6: Make Shannon Diversity Plot
+# ---------------------------
+p_shannon <- ggplot(diversity_metrics, aes(x = Group, y = Shannon, fill = Group)) +
+  geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 2, alpha = 0.9) +
+  scale_fill_manual(name = NULL, values = obs_fill_values) +
+  scale_color_manual(name = NULL, values = obs_color_values) +
+  labs(title = "Shannon Diversity", y = "Shannon Diversity Index") +
+  scale_y_continuous(limits = c(0, shannon_upper)) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    axis.text.x   = element_blank(),      # Remove x–tick labels
+    axis.ticks.x  = element_blank(),      # Remove x–ticks
+    axis.title.x  = element_blank(),
+    legend.position = "right"
+  ) +
+  stat_compare_means(
+    comparisons = list(c("Low-Intermediate", "High")),
+    method      = "wilcox.test",
+    label       = "p.signif",
+    size        = 6,
+    label.y   = shannon_label_y
+  )
+
+# ---------------------------
+# Step 7: Create Combined Plot with Shared Legend
+# ---------------------------
+#Remove individual legends
+p_observed_no_leg <- p_observed + theme(legend.position = "none")
+p_shannon_no_leg  <- p_shannon  + theme(legend.position = "none")
+
+# Arrange the two main plots side by side (ensuring equal widths)
+main_plots <- ggarrange(p_observed_no_leg, p_shannon_no_leg,
+                        ncol = 2, nrow = 1)
+
+# Create a common x–axis label grob (centered over the two panels)
+xlabel_grob <- text_grob("BAL Amylase Group", face = "bold", size = 16, hjust = 0.5)
+
+# Stack the main plots and the common x-axis label vertically
+main_with_xlabel <- ggarrange(main_plots, xlabel_grob, ncol = 1, heights = c(10, 1))
+
+# Extract common legend, positioned at the bottom.
+common_legend <- get_legend(
+  p_shannon + theme(legend.position = "bottom",
+                    legend.box = "horizontal")
+)
+
+final_plot <- ggarrange(main_with_xlabel, common_legend,
+                        ncol = 1, heights = c(10, 1))
+
+# ---------------------------
+# Make Relative Abundance Barplot
+# ---------------------------
 sample_data(df_pruned)$Group <- amylase_metadata$Amylase
 ps <- filter_taxa(df_pruned, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
 df_rel_abund <- transform_sample_counts(ps, function(x) x / sum(x))
 barplot <- phyloseq::plot_bar(df_rel_abund, fill = "Order") + geom_bar(aes(fill = Order), stat = "identity", position = "stack")  + scale_fill_viridis_d(option="mako") + labs(x = "", y = "Relative Abundance\n") + facet_wrap(~ Group, scales = "free") + theme(panel.background = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position="bottom", strip.text = element_text(size=16))
-df_melt <- psmelt(df_rel_abund)
-avg_composition <- df_melt %>% group_by(Group, Family) %>% summarize(Abundance = mean(Abundance))df_melt <- psmelt(df_rel_abund)
-avg_composition <- df_melt %>% group_by(Group, Family) %>% summarize(Abundance = mean(Abundance))
-write.csv(avg_composition, "average_relative_abdunace.csv", row.names=FALSE)
 
-----------------------------------------------------------------------
-#CALCULATE DIVERSITY METRICS (both Shannon and Observed)
-----------------------------------------------------------------------
-diversity_metrics <- estimate_richness(df_pruned, measures = c("Shannon", "Observed"))
-diversity_metrics$Group <- amylase_metadata$Amylase  # Attach grouping metadata
+# -----------------------------------------
+Convert Counts to Relative Abundances and Compute Distances
+# -----------------------------------------
+#Convert counts to relative abundance
+df_pruned_rel <- transform_sample_counts(df_pruned, function(x) x / sum(x))
 
-# ------------------------------------
-# Set Fixed y–axis Limits and p-value Label Positions
-# ------------------------------------
-obs_upper       <- 500      # Observed y-axis maximum
-obs_label_y     <- 480      # p-value label position for Observed plot
-shannon_upper   <- 5        # Shannon y-axis maximum
-shannon_label_y <- 4.8      # p-value label position for Shannon plot
+#Prepare data and compute distances
+bray_dist <- phyloseq::distance(df_pruned_rel, method = "bray")
+bray_pcoa <- ordinate(df_pruned_rel, method = "PCoA", distance = "bray")
 
-# Use a colorblind safe palette (Okabe & Ito) with no legend title.
-obs_fill_values <- c("<75th Percentile" = "#0072B2", ">75th Percentile" = "#D55E00")
-obs_color_values <- obs_fill_values  # same values for fill and color
+# -----------------------------------------
+Run PERMANOVA Test and Calculate Percentage Variance
+# -----------------------------------------
+# Extract sample data as a data frame for PERMANOVA
+sample_df <- as(sample_data(df_pruned_rel), "data.frame")
+
+#Run PERMANOVA using adonis2
+adonis_result <- adonis2(bray_dist ~ Group, data = sample_df)
+
+# Extract and format output statistics
+F_val <- round(adonis_result$F[1], 2)
+R2_val <- round(adonis_result$R2[1], 2)
+p_val  <- adonis_result$`Pr(>F)`[1]
+perm_label <- paste0("10% Prevalence Threshold - PERMANOVA: F = ", F_val,
+                     ", R² = ", R2_val,
+                     ", p = ", format(p_val, digits = 2))
+
+#Calculate percentage variance
+pc1 <- round(bray_pcoa$values$Relative_eig[1] * 100, 1)
+pc2 <- round(bray_pcoa$values$Relative_eig[2] * 100, 1)
+
+# -----------------------------------------
+# Step 6: Create PCoA Plot w/PERMANOVA Result
+# -----------------------------------------
+#Produces PCoA with solid line elipses
+p_pcoa_solid <- plot_ordination(df_pruned_rel, bray_pcoa, color = "Group") +
+  geom_point(size = 3, alpha = 0.9, shape = 16) +
+  # Draw 95% confidence ellipses for each group
+  stat_ellipse(aes(color = Group), type = "norm",
+               linetype = "solid", level = 0.95, linewidth = 1) +
+  scale_color_manual(name = "BAL Amylase Group", 
+                     values = c("Low-Intermediate" = "#0072B2",
+                                "High" = "#D55E00")) +
+  labs(title = "Bray–Curtis Dissimilarity (PCoA)",
+       x = paste0("PC1 (", pc1, "%)"),
+       y = paste0("PC2 (", pc2, "%)")) +
+  theme_minimal(base_size = 16) +
+  theme(plot.title   = element_text(face = "bold", hjust = 0.5),
+        legend.position = "right") +
+  # Annotate the plot with PERMANOVA results
+  annotate("text", x = Inf, y = Inf, label = perm_label,
+           hjust = 1.1, vjust = 1.1, size = 3, fontface = "italic")
+
+#Part B: PC1/PC2 Plots
+
+# -------------------------------------------------------------
+# Step 1. Extract the PCoA Scores into a Data Frame
+# -------------------------------------------------------------
+pc_df <- as.data.frame(bray_pcoa$vectors)
+colnames(pc_df)[1:2] <- c("PC1", "PC2")
+pc_df$Group <- sample_data(df_pruned_rel)$Group
+
+# -------------------------------------------------------------
+# Step 2. Set p-value Label Positions for Plot
+# -------------------------------------------------------------
+max_pc1 <- max(pc_df$PC1, na.rm = TRUE)
+min_pc1 <- min(pc_df$PC1, na.rm = TRUE)
+range_pc1 <- max_pc1 - min_pc1
+label_y_pc1 <- 0.45
+
+# For PC2:
+max_pc2 <- max(pc_df$PC2, na.rm = TRUE)
+min_pc2 <- min(pc_df$PC2, na.rm = TRUE)
+range_pc2 <- max_pc2 - min_pc2
+label_y_pc2 <- 0.45
+
+# -------------------------------------------------------------
+# Step 3. Create the Boxplots for PC1 and PC2 with Stats
+# -------------------------------------------------------------
+# Define color palette
+palette <- c("Low-Intermediate" = "#0072B2",
+             "High" = "#D55E00")
+
+# PC1 Boxplot (removing individual x axis ticks and labels)
+p_pc1 <- ggplot(pc_df, aes(x = Group, y = PC1, fill = Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 3, alpha = 0.8) +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) +
+  labs(title = paste0("PC1 (", pc1, "% variance)"),
+       y = "PC1 Score") +
+  scale_y_continuous(limits = c(-0.5, 0.5)) +
+  theme_minimal(base_size = 16) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        # Remove individual x-axis ticks, text, and title
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_compare_means(comparisons = list(c("Low-Intermediate", "High")),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     label.y = label_y_pc1)
+
+# PC2 Boxplot (removing individual x axis ticks and labels)
+p_pc2 <- ggplot(pc_df, aes(x = Group, y = PC2, fill = Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(aes(color = Group), width = 0.15, size = 3, alpha = 0.8) +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) +
+  labs(title = paste0("PC2 (", pc2, "% variance)"),
+       y = "PC2 Score") +
+  scale_y_continuous(limits = c(-0.5, 0.5)) +
+  theme_minimal(base_size = 16) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        # Remove individual x-axis ticks, text, and title
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_compare_means(comparisons = list(c("Low-Intermediate", "High")),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     label.y = label_y_pc2)
+
+# -----------------------
+# Step 4. Combine the Boxplots
+# ------------------------
+# Arrange the two plots side by side without individual x-axis info
+pc_plot <- ggarrange(p_pc1, p_pc2, ncol = 2, nrow = 1)
+
+# Display the final plot
+print(pc_plot)
+
+# -----------------------------------------
+# Step 5: Save PC1/PC2 Plots
+# -----------------------------------------
+ggsave("PC1_PC2_BoxPlots.png", plot = pc_plot, width = 8, height = 6, dpi = 300)
+ggsave("PC1_PC2_BoxPlots.pdf", plot = pc_plot, width = 8, height = 6, dpi = 300)
+ggsave("PC1_PC2_BoxPlots.tiff", plot = pc_plot, width = 8, height = 6, dpi = 300)
+
+# -----------------------------------------
+# Combine Barplot, Alpha Diversity, PCoA and PC1, PC2 into One Figure
+# -----------------------------------------
+pc_plot <- ggarrange(p_pc1, p_pc2, ncol = 2, nrow = 1)
+combined_plots <- ggarrange(barplot, final_plot, p_pcoa_solid, pc_plot, labels = c("A", "B", "C", "D"),  ncol = 2, nrow = 2)
+print (combined_plots)
 
 # -----------------------------------------
 #This Script Runs Maaslin3 Analysis
@@ -308,3 +526,139 @@ fit_out <- maaslin3(
     write_csv(genus_all_results,("C:/path/to/your/directory/genus_all_results.csv"))
     write_csv(family_all_results,("C:/path/to/your/directory/family_all_results.csv"))
 
+# -----------------------------------------
+#This Script Plots 10 Most Differentially Abundant Taxa from Maaslin3 Anaylsis
+    #Run this script after running "DataProcessing_Maaslin3.R": Requires genus_all_results and family_all_results tables
+# -----------------------------------------
+
+# -----------------------------------------
+# Step 1: Load necessary libraries
+# -----------------------------------------
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+# -----------------------------------------
+# Step 2: Identfify and Filter Out Top 10 Most Differentially Abundant Taxa
+# -----------------------------------------
+top10_mostdiff_genera <- genus_all_results %>%
+  filter(model == "abundance") %>% #Filters for abundance results
+  mutate(prevalence = N_not_zero / N) %>% #Calculates prevalence and adds to table
+  filter(prevalence > 0.10) %>% #filters for 10% prevalence
+  arrange(qval_individual) %>% #Arranges based on qcal_individual/FDR
+  head(10) #Selects for top 10 most differentially abundant
+
+top10_mostdiff_family <- family_all_results %>%
+  filter(model == "abundance") %>% #Filters for abundance results
+  mutate(prevalence = N_not_zero / N) %>% #Calculates prevalence and adds to table
+  filter(prevalence > 0.10) %>% #filters for 10% prevalence
+  arrange(qval_individual) %>% #Arranges based on qcal_individual/FDR
+  head(10) #Selects for top 10 most differentially abundant
+
+# -----------------------------------------
+# 3. Make Family-level Plot
+# -----------------------------------------
+maaslin_results_family <- top10_mostdiff_family %>%
+  mutate(q_category = case_when(
+    qval_individual < 0.05 ~ "q < 0.05",
+    qval_individual > 0.05  ~ "q > 0.05"
+  ),
+  n_label = paste0("n = ", N_not_zero))
+
+p_fam <- ggplot(maaslin_results_family, aes(x = coef, y = reorder(feature, coef))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_point(aes(color = q_category), size = 4) +
+  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
+                width = 0.2, color = "gray50") +
+  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
+  ggtitle("Family Level") +
+  labs(x = "Coefficient (Effect Size)",
+       y = "Family",
+       color = "FDR Range") +
+  scale_color_manual(values = c("q < 0.05"     = "#E41A1C",
+                                "q > 0.05" = "#377EB8")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 12, face = "italic")
+  )
+
+# -----------------------------------------
+# 4. Make Genera-level Plot (with core salivary genera starred in label)
+# -----------------------------------------
+
+# Define core oral genera
+core_genera <- c(
+  "Streptococcus", "Haemophilus", "Prevotella", "Neisseria", "Rothia",
+  "Veillonella", "Fusobacterium", "Megasphaera", "Atopobium", "Schaalia",
+  "Actinomyces", "Gemella", "Campylobacter", "Oribacterium", "Aggregatibacter",
+  "Leptotrichia", "Solobacterium", "Peptostreptococcus", "Ruminococcaceae_[G−1]",
+  "Capnocytophaga", "Lachnoanaerobaculum", "Stomatobaculum", "Peptostreptococcaceae_[XI][G−1]",
+  "Bergeyella", "Catonella", "Dialister", "Granulicatella", "Saccharibacteria_(TM7)_[G−1]"
+)
+
+# Add core flag and star to label
+maaslin_results_genera <- top10_mostdiff_genera %>%
+  mutate(
+    q_category = case_when(
+      qval_individual < 0.05 ~ "q < 0.05",
+      TRUE ~ "q > 0.05"
+    ),
+    genus_name = sapply(strsplit(as.character(feature), "_"), `[`, 1),
+    is_core = genus_name %in% core_genera,
+    feature_starred = ifelse(is_core, paste0(feature, " *"), feature),
+    n_label = paste0("n = ", N_not_zero)
+  )
+
+p_gen <- ggplot(maaslin_results_genera, aes(x = coef, y = reorder(feature_starred, coef))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_point(aes(color = q_category), size = 4) +
+  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
+                width = 0.2, color = "gray50") +
+  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
+  ggtitle("Genus Level") +
+  labs(x = "Coefficient (Effect Size)",
+       y = "Genus",
+       color = "FDR Range",
+       caption = "* Core Salivary Microbiome Member") +
+  scale_color_manual(values = c("q < 0.05" = "#E41A1C", "q > 0.05" = "#377EB8")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 12, face = "italic"),
+    plot.caption = element_text(hjust = 0.5, size = 11, face = "italic")
+  )
+# -----------------------------------------
+# 5. Combine the two plots
+# -----------------------------------------
+combined_plot <- p_fam + p_gen +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+
+# -----------------------------------------
+# 6. Label Plots
+# -----------------------------------------
+final_plot <- combined_plot +
+  plot_annotation(
+    title = "Top 10 Most Differentially Abundant Taxa for BAL Amylase",
+    subtitle = "10% Prevalence Threshold",
+    caption = "Left of 0: More Abundant in High Group; Right of 0: More Abundant in Low-Intermediate Group"
+  ) &
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 13, face = "italic"),
+    plot.caption = element_text(hjust = 0.5, size = 12)
+  )
+# Print the final combined plot
+print(final_plot)
+
+# -----------------------------------------
+# 7. Save plot
+# -----------------------------------------
+ggsave("Diff_Abund_Top10.png", plot = final_plot, width = 13, height = 6, dpi = 300)
+ggsave("Diff_Abund_Top10.pdf", plot = final_plot, width = 13, height = 6, dpi = 300)
+ggsave("Diff_Abund_Top10.tiff", plot = final_plot, width = 13, height = 6, dpi = 300)
