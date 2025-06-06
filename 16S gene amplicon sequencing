@@ -50,7 +50,7 @@ df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
 df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
 # Load metadata table (assigns each sample to lower 75th or upper 25th amylase percentile)
-amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list050725.csv")
+amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv")
 
 # -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
@@ -74,7 +74,7 @@ RELATIVE ABUNDANCE STACKED BARPLOT
 sample_data(df_pruned)$Group <- amylase_metadata$Amylase
 ps <- filter_taxa(df_pruned, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
 df_rel_abund <- transform_sample_counts(ps, function(x) x / sum(x))
-phyloseq::plot_bar(df_rel_abund, fill = "Order") + geom_bar(aes(fill = Order), stat = "identity", position = "stack")  + scale_fill_viridis_d(option="cividis") + labs(x = "", y = "Relative Abundance\n") + facet_wrap(~ Group, scales = "free") + theme(panel.background = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position="bottom", strip.text = element_text(size=16))
+barplot <- phyloseq::plot_bar(df_rel_abund, fill = "Order") + geom_bar(aes(fill = Order), stat = "identity", position = "stack")  + scale_fill_viridis_d(option="mako") + labs(x = "", y = "Relative Abundance\n") + facet_wrap(~ Group, scales = "free") + theme(panel.background = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position="bottom", strip.text = element_text(size=16))
 df_melt <- psmelt(df_rel_abund)
 avg_composition <- df_melt %>% group_by(Group, Family) %>% summarize(Abundance = mean(Abundance))df_melt <- psmelt(df_rel_abund)
 avg_composition <- df_melt %>% group_by(Group, Family) %>% summarize(Abundance = mean(Abundance))
