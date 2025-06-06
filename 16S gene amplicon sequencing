@@ -180,7 +180,7 @@ bray_dist <- phyloseq::distance(df_pruned_rel, method = "bray")
 bray_pcoa <- ordinate(df_pruned_rel, method = "PCoA", distance = "bray")
 
 # -----------------------------------------
-Run PERMANOVA Test and Calculate Percentage Variance
+#Run PERMANOVA Test and Calculate Percentage Variance
 # -----------------------------------------
 # Extract sample data as a data frame for PERMANOVA
 sample_df <- as(sample_data(df_pruned_rel), "data.frame")
@@ -340,45 +340,6 @@ library(ggpubr)
 library(dplyr)
 
 # -----------------------------------------
-# Step 2: Load and Decontam Data and Metadata Files
-# -----------------------------------------
-# Load in Amplicon Data
-df <- readRDS("asv_table_cp_20240625.rds")
-df <- asv_table_cp_20240625$Amplicon
-
-#Define Decomtam Function
-decontaminate_phyloseq <- function(ps4decontam){
-  # Get blanks
-  ps4decontam <- subset_samples(ps4decontam, sample.type != "zymo-control")
-  print(ps4decontam)
-  sample_data(ps4decontam)$is.neg <- sample_data(ps4decontam)$Sample_or_Control ==
-    "Control-Sample"
-  # Get dataframe of contaminants
-  contamdf.prev05 <- isContaminant(
-    ps4decontam,
-    method="prevalence",
-    neg="is.neg",
-    threshold=0.5
-  )
-  print(table(contamdf.prev05$contaminant))
-  print(filter(contamdf.prev05, contaminant == TRUE) %>% rownames())
-  # Prune contaminant taxa at the threshold .05 (> prevalence in control=contaminant)
-  final_biom <- prune_taxa(!contamdf.prev05$contaminant, ps4decontam)
-  print(ntaxa(final_biom) / ntaxa(ps4decontam))
-  # final_biom <- subset_samples(final_biom, sample.type != "zymo-control")
-  return(final_biom)
-}
-#Decontam
-df <- decontaminate_phyloseq(df)
-
-# Filter out unassigned/eukaryote/chloroplast/mitochondria
-df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
-df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
-
-# Load metadata table (assigns each sample to high or low-intermediate group for amylase)
-amylase_metadata <- read.csv("Amylase_metadata_list.csv")
-
-# -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
 # -----------------------------------------
 # Get the sample names from metadata and data file
@@ -473,7 +434,7 @@ head(family_counts)
 # Step 6: Run Maaslin3
 # -----------------------------------------
 #Reload metadata
-amylase_metadata <- read.csv("amylase_metadata_list.csv", row.names = 1)
+amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv", row.names = 1)
 
 # Set a seed for reproducibility
 set.seed(1)
@@ -515,17 +476,22 @@ fit_out <- maaslin3(
 # -----------------------------------------
 # Step 7: Save Outputs as .csv(s)
 # -----------------------------------------
-    # Read the .tsv files
-    genus_all_results<- read_tsv("C:/path/to/your/directory/genus_maaslin3_output_/all_results.tsv")
-    family_all_results<- read_tsv("C:/path/to/your/directory/family_maaslin3_output/all_results.tsv")
+library(readr)
+#Get working directory to determine the path to extract the tsv file from
+getwd()
+
+# Read the .tsv files
+    genus_all_results<- read_tsv("/gpfs/home/con472/genus_maaslin3_output/all_results.tsv")
+    family_all_results<- read_tsv("/gpfs/home/con472/family_maaslin3_output/all_results.tsv")
     
     # Check the first few rows of the data to ensure it was read correctly
     print(head(genus_all_results))
     print(head(family_all_results))
     
     # Write the tables to .csv files for easy future viewing (optional)
-    write_csv(genus_all_results,("C:/path/to/your/directory/genus_all_results.csv"))
-    write_csv(family_all_results,("C:/path/to/your/directory/family_all_results.csv"))
+write_csv(genus_all_results,("/gpfs/home/con472/genus_all_results.csv"))
+write_csv(family_all_results,("/gpfs/home/con472/family_all_results.csv"))
+
 
 # -----------------------------------------
 #This Script Plots 10 Most Differentially Abundant Taxa from Maaslin3 Anaylsis
