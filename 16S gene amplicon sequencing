@@ -19,6 +19,9 @@ library(decontam)
 df <- readRDS("asv_table_cp_20240625.rds")
 df <- asv_table_cp_20240625$Amplicon
 
+## Drop mixed samples
+df_new = subset_samples(df, !patient.id1 %in% c("PT1008BAL03", "PT1008BAL07", "PT1010BAL03", "PT1011BAL03", "PT1013BAL00", "PT1014BAL00", "PT1015BAL00", "PT1016BAL00", "PT1018BAL00", "PT1019BAL00", "PT1020BAL00", "PT1020BAL03", "PT1021BAL00", "PT1022BAL00",  "PT1023BAL00", "PT1024BAL00", "PT1028BAL00", "PT1029BAL00", "PT1030BAL00", "PT1031BAL00", "PT1032BAL13", "PT1033BAL00", "PT1034BAL00", "PT1037BAL00",  "PT1041BAL06", "PT1044BAL00", "PT1045BAL00", "PT1045BAL03", "PT1046BAL00", "PT1282BAL00", "PT1315BAL28", "PT1354BAL00", "PT1179BAL00", "PT1179BAL16"))
+
 #Define Decomtam Function
 decontaminate_phyloseq <- function(ps4decontam){
   # Get blanks
@@ -43,7 +46,7 @@ decontaminate_phyloseq <- function(ps4decontam){
 }
 
 #Decontam
-df <- decontaminate_phyloseq(df)
+df <- decontaminate_phyloseq(df_new)
 
 # Filter out unassigned/eukaryote/chloroplast/mitochondria
 df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
