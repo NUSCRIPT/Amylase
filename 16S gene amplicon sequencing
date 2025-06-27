@@ -1,26 +1,31 @@
 # -----------------------------------------
-#This Script Calculates, Compares, and Plots Alpha Diversity (Observed and Shannon)
-    #Requires "asv_table_cp_20240625.rds" (amplicon data) and "amylase_metadata_list.csv" (metadata)
+#This Script Runs Maaslin3 Analysis
+  #Requires"asv_table_cp_20240625.rds" and "amylase_metadata_list.csv"
 # -----------------------------------------
 
 # -----------------------------------------
-# Step 1: Load necessary libraries
+# Step 1: Install and load necessary libraries
 # -----------------------------------------
-library(phyloseq)
-library(ggplot2)
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("biobakery/maaslin3")
+for (lib in c('maaslin3', 'dplyr', 'ggplot2', 'knitr', 'kableExtra')) {
+  suppressPackageStartupMessages(require(lib, character.only = TRUE))
+}
+BiocManager::install("decontam")
+install.packages("readr")
+library(readr)
+library(maaslin3)
+library(decontam)
 library(ggpubr)
 library(dplyr)
-library(decontam)
 
 # -----------------------------------------
-# Step 2: Load and Filter Data and Metadata Files
+# Step 2: Load and Decontam Data and Metadata Files
 # -----------------------------------------
-# Load amplicon data
+# Load in Amplicon Data
 df <- readRDS("asv_table_cp_20240625.rds")
 df <- asv_table_cp_20240625$Amplicon
-
-## Drop mixed samples
-df_new = subset_samples(df, !patient.id1 %in% c("PT1008BAL03", "PT1008BAL07", "PT1010BAL03", "PT1011BAL03", "PT1013BAL00", "PT1014BAL00", "PT1015BAL00", "PT1016BAL00", "PT1018BAL00", "PT1019BAL00", "PT1020BAL00", "PT1020BAL03", "PT1021BAL00", "PT1022BAL00",  "PT1023BAL00", "PT1024BAL00", "PT1028BAL00", "PT1029BAL00", "PT1030BAL00", "PT1031BAL00", "PT1032BAL13", "PT1033BAL00", "PT1034BAL00", "PT1037BAL00",  "PT1041BAL06", "PT1044BAL00", "PT1045BAL00", "PT1045BAL03", "PT1046BAL00", "PT1282BAL00", "PT1315BAL28", "PT1354BAL00", "PT1179BAL00", "PT1179BAL16"))
 
 #Define Decomtam Function
 decontaminate_phyloseq <- function(ps4decontam){
@@ -44,16 +49,15 @@ decontaminate_phyloseq <- function(ps4decontam){
   # final_biom <- subset_samples(final_biom, sample.type != "zymo-control")
   return(final_biom)
 }
-
 #Decontam
-df <- decontaminate_phyloseq(df_new)
+df <- decontaminate_phyloseq(df)
 
 # Filter out unassigned/eukaryote/chloroplast/mitochondria
 df <- phyloseq::subset_taxa(df, !Kingdom %in% c("Unassigned", "d__Eukaryota"))
 df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
-# Load metadata (assigns each sample to high or low-intermediate amylase group)
-amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv")
+# Load metadata table (assigns each sample to high or low-intermediate group for amylase)
+amylase_metadata <- read.csv("Amylase_metadata_list_ambiguityremoved.csv")
 
 # -----------------------------------------
 # Step 3: Ensure Sample Names for Data/Metadata Overlap
@@ -69,13 +73,153 @@ common_samples <- intersect(samples_in_df,samples_in_meta)
 df_pruned <- subset_samples(df, sample_names(df) %in% common_samples)
 
 # -----------------------------------------
-# Step 4: Calculate diversity metrics (Shannon and Observed)
+# Step 4: Agglomerate Counts at Genus Level and Assign Taxonomy
+# -----------------------------------------
+# Agglomerate at the Genus level. This sums counts for all OTUs that share the same Genus.
+df_genus <- tax_glom(df_pruned, taxrank = "Genus")
+
+# Extract the genus level OTU table.
+otu_genus <- otu_table(df_genus)
+
+# Ensure that the OTU table orientation is correct (samples as rows)
+if(taxa_are_rows(otu_genus)) {
+  genus_counts <- as.data.frame(t(otu_genus))
+} else {
+  genus_counts <- as.data.frame(otu_genus)
+}
+
+# Update the column names using the Genus names from the taxonomy table.
+tax_genus <- tax_table(df_genus)[, "Genus"]
+colnames(genus_counts) <- as.character(tax_genus)
+
+# Convert to character vector
+genus_names <- as.character(tax_genus)
+
+# Identify duplicated "uncultured" entries and make them unique
+uncultured_indices <- which(genus_names == "uncultured")
+if (length(uncultured_indices) > 0) {
+  genus_names[uncultured_indices] <- paste0("uncultured_", seq_along(uncultured_indices))
+}
+
+# Assign updated names to the count table
+colnames(genus_counts) <- genus_names
+
+# Inspect the first few rows of the family-level count table.
+head(genus_counts)
+
+# Combine duplicate genus columns by summing their counts across rows
+genus_counts <- as.data.frame(
+  t(apply(genus_counts, 1, function(x) tapply(x, names(x), sum)))
+)
+
+# Inspect the first few rows of the genus-level count table.
+head(genus_counts)
+
+# -----------------------------------------
+# Step 5: Agglomerate Counts at Family Level and Assign Taxonomy
+# -----------------------------------------
+# Agglomerate at the Family level.
+df_family <- tax_glom(df_pruned, taxrank = "Family",NArm =TRUE)
+
+# Extract the OTU table from the family-level object.
+otu_family <- otu_table(df_family)
+
+# Ensure that the OTU table orientation is correct. (samples as rows)
+if(taxa_are_rows(otu_family)) {
+  family_counts <- as.data.frame(t(otu_family))
+} else {
+  family_counts <- as.data.frame(otu_family)
+}
+
+# Update the column names using the Family names from the taxonomy table.
+tax_family <- tax_table(df_family)[, "Family"]
+colnames(family_counts) <- as.character(tax_family)
+
+# Convert to character vector
+family_names <- as.character(tax_family)
+
+# Identify duplicated "uncultured" entries and make them unique
+uncultured_indices <- which(family_names == "uncultured")
+if (length(uncultured_indices) > 0) {
+  family_names[uncultured_indices] <- paste0("uncultured_", seq_along(uncultured_indices))
+}
+
+# Assign updated names to the count table
+colnames(family_counts) <- family_names
+
+# Inspect the first few rows of the family-level count table.
+head(family_counts)
+
+# -----------------------------------------
+# Step 6: Run Maaslin3
+# -----------------------------------------
+#Reload metadata
+amylase_metadata <- read.csv("Amylase_metadata_list_ambiguityremoved.csv", row.names = 1)
+
+# Set a seed for reproducibility
+set.seed(1)
+
+# Run MaalLin3 (Genus Level)
+fit_out <- maaslin3(
+  input_data = genus_counts,
+  input_metadata = amylase_metadata,
+  output = 'genus_maaslin3_output',   # Specify your desired output directory name
+  formula = "~ Amylase",  # Replace with actual metadata columns; e.g., "~ diagnosis + age"
+  normalization = 'TSS',           # Total Sum Scaling normalization
+  transform = 'LOG',               # Log transformation (LOG means log2-transformed relative abundances)
+  augment = TRUE,                  # Data augmentation to deal with logistic regression issues
+  standardize = TRUE,              # Z-score standardizes continuous metadata variables
+  max_significance = 0.05,          # Maximum allowed FDR for significance
+  median_comparison_abundance = TRUE,  
+  median_comparison_prevalence = FALSE,
+  max_pngs = 250,                  # Maximum number of PNG plots to save (if applicable)
+  cores = 1                        # Number of CPU cores to use
+)
+
+# Run Maaslin3 (Family Level)
+fit_out <- maaslin3(
+  input_data = family_counts,
+  input_metadata = amylase_metadata,
+  output = 'family_maaslin3_output',   # Specify your desired output directory name
+  formula = "~ Amylase",  
+  normalization = 'TSS',           # Total Sum Scaling normalization
+  transform = 'LOG',               # Log transformation (LOG means log2-transformed relative abundances)
+  augment = TRUE,                  # Data augmentation to deal with logistic regression issues
+  standardize = TRUE,              # Z-score standardizes continuous metadata variables
+  max_significance = 0.05,          # Maximum allowed FDR for significance
+  median_comparison_abundance = TRUE,  
+  median_comparison_prevalence = FALSE,
+  max_pngs = 250,                  # Maximum number of PNG plots to save (if applicable)
+  cores = 1                        # Number of CPU cores to use
+)
+
+# -----------------------------------------
+# Step 7: Save Outputs as .csv(s)
+# -----------------------------------------
+    # Read the .tsv files
+    genus_all_results<- read_tsv("C:/path/to/your/directory/genus_maaslin3_output_/all_results.tsv")
+
+    family_all_results<- read_tsv("C:/path/to/your/directory/family_maaslin3_output/all_results.tsv")
+    
+    # Check the first few rows of the data to ensure it was read correctly
+    print(head(genus_all_results))
+    print(head(family_all_results))
+    
+    # Write the tables to .csv files for easy future viewing (optional)
+    write_csv(genus_all_results,("genus_all_results.csv"))
+    write_csv(family_all_results,("family_all_results.csv"))
+
+
+# -----------------------------------------
+#This Script Calculates, Compares, and Plots Alpha Diversity (Observed and Shannon)
+ -----------------------------------------
+# Step 8: Calculate diversity metrics (Shannon and Observed)
 # -----------------------------------------
 diversity_metrics <- estimate_richness(df_pruned, measures = c("Shannon", "Observed"))
 diversity_metrics$Group <- amylase_metadata$Amylase  # Attaches Amylase Grouping
 
 # ------------------------------------
-# Step 5: Set y axis upper limits and p value label position
+# Step 9: Set y axis upper limits and p value label position
 # ------------------------------------
 obs_upper       <- 500      # observed y-axis maximum
 obs_label_y     <- 480      # p-value label position for Observed plot
@@ -87,7 +231,7 @@ obs_fill_values <- c("Low-Intermediate" = "#0072B2", "High" = "#D55E00")
 obs_color_values <- obs_fill_values  # same values for fill and color
 
 # ---------------------------
-# Step 6: Make Observed Diversity Plot
+# Step 10: Make Observed Diversity Plot
 # ---------------------------
 p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Group)) +
   geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
@@ -113,7 +257,7 @@ p_observed <- ggplot(diversity_metrics, aes(x = Group, y = Observed, fill = Grou
   )
 
 # ---------------------------
-# Step 6: Make Shannon Diversity Plot
+# Step 11: Make Shannon Diversity Plot
 # ---------------------------
 p_shannon <- ggplot(diversity_metrics, aes(x = Group, y = Shannon, fill = Group)) +
   geom_violin(trim = FALSE, alpha = 0.5, color = "black", width = 0.8) +
@@ -139,7 +283,7 @@ p_shannon <- ggplot(diversity_metrics, aes(x = Group, y = Shannon, fill = Group)
   )
 
 # ---------------------------
-# Step 7: Create Combined Plot with Shared Legend
+# Step 12: Create Combined Plot with Shared Legend
 # ---------------------------
 #Remove individual legends
 p_observed_no_leg <- p_observed + theme(legend.position = "none")
@@ -173,7 +317,7 @@ df_rel_abund <- transform_sample_counts(ps, function(x) x / sum(x))
 barplot <- phyloseq::plot_bar(df_rel_abund, fill = "Order") + geom_bar(aes(fill = Order), stat = "identity", position = "stack")  + scale_fill_viridis_d(option="mako") + labs(x = "", y = "Relative Abundance\n") + facet_wrap(~ Group, scales = "free") + theme(panel.background = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position="bottom", strip.text = element_text(size=16))
 
 # -----------------------------------------
-Convert Counts to Relative Abundances and Compute Distances
+# Convert Counts to Relative Abundances and Compute Distances
 # -----------------------------------------
 #Convert counts to relative abundance
 df_pruned_rel <- transform_sample_counts(df_pruned, function(x) x / sum(x))
@@ -319,316 +463,3 @@ ggsave("PC1_PC2_BoxPlots.tiff", plot = pc_plot, width = 8, height = 6, dpi = 300
 pc_plot <- ggarrange(p_pc1, p_pc2, ncol = 2, nrow = 1)
 combined_plots <- ggarrange(barplot, final_plot, p_pcoa_solid, pc_plot, labels = c("A", "B", "C", "D"),  ncol = 2, nrow = 2)
 print (combined_plots)
-
-# -----------------------------------------
-#This Script Runs Maaslin3 Analysis
-  #Requires"asv_table_cp_20240625.rds" and "amylase_metadata_list.csv"
-# -----------------------------------------
-
-# -----------------------------------------
-# Step 1: Install and load necessary libraries
-# -----------------------------------------
-if (!require("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-BiocManager::install("biobakery/maaslin3")
-for (lib in c('maaslin3', 'dplyr', 'ggplot2', 'knitr', 'kableExtra')) {
-  suppressPackageStartupMessages(require(lib, character.only = TRUE))
-}
-BiocManager::install("decontam")
-install.packages("readr")
-library(readr)
-library(maaslin3)
-library(decontam)
-library(ggpubr)
-library(dplyr)
-
-# -----------------------------------------
-# Step 3: Ensure Sample Names for Data/Metadata Overlap
-# -----------------------------------------
-# Get the sample names from metadata and data file
-samples_in_df <- sample_names(df)
-samples_in_meta <- amylase_metadata[,1]
-
-# Determine common samples between data and metadata
-common_samples <- intersect(samples_in_df,samples_in_meta) 
-
-# Subset the data file to only include shared samples
-df_pruned <- subset_samples(df, sample_names(df) %in% common_samples)
-
-# -----------------------------------------
-# Step 4: Agglomerate Counts at Genus Level and Assign Taxonomy
-# -----------------------------------------
-# Agglomerate at the Genus level. This sums counts for all OTUs that share the same Genus.
-df_genus <- tax_glom(df_pruned, taxrank = "Genus")
-
-# Extract the genus level OTU table.
-otu_genus <- otu_table(df_genus)
-
-# Ensure that the OTU table orientation is correct (samples as rows)
-if(taxa_are_rows(otu_genus)) {
-  genus_counts <- as.data.frame(t(otu_genus))
-} else {
-  genus_counts <- as.data.frame(otu_genus)
-}
-
-# Update the column names using the Genus names from the taxonomy table.
-tax_genus <- tax_table(df_genus)[, "Genus"]
-colnames(genus_counts) <- as.character(tax_genus)
-
-# Convert to character vector
-genus_names <- as.character(tax_genus)
-
-# Identify duplicated "uncultured" entries and make them unique
-uncultured_indices <- which(genus_names == "uncultured")
-if (length(uncultured_indices) > 0) {
-  genus_names[uncultured_indices] <- paste0("uncultured_", seq_along(uncultured_indices))
-}
-
-# Assign updated names to the count table
-colnames(genus_counts) <- genus_names
-
-# Inspect the first few rows of the family-level count table.
-head(genus_counts)
-
-# Combine duplicate genus columns by summing their counts across rows
-genus_counts <- as.data.frame(
-  t(apply(genus_counts, 1, function(x) tapply(x, names(x), sum)))
-)
-
-# Inspect the first few rows of the genus-level count table.
-head(genus_counts)
-
-# -----------------------------------------
-# Step 5: Agglomerate Counts at Family Level and Assign Taxonomy
-# -----------------------------------------
-# Agglomerate at the Family level.
-df_family <- tax_glom(df_pruned, taxrank = "Family",NArm =TRUE)
-
-# Extract the OTU table from the family-level object.
-otu_family <- otu_table(df_family)
-
-# Ensure that the OTU table orientation is correct. (samples as rows)
-if(taxa_are_rows(otu_family)) {
-  family_counts <- as.data.frame(t(otu_family))
-} else {
-  family_counts <- as.data.frame(otu_family)
-}
-
-# Update the column names using the Family names from the taxonomy table.
-tax_family <- tax_table(df_family)[, "Family"]
-colnames(family_counts) <- as.character(tax_family)
-
-# Convert to character vector
-family_names <- as.character(tax_family)
-
-# Identify duplicated "uncultured" entries and make them unique
-uncultured_indices <- which(family_names == "uncultured")
-if (length(uncultured_indices) > 0) {
-  family_names[uncultured_indices] <- paste0("uncultured_", seq_along(uncultured_indices))
-}
-
-# Assign updated names to the count table
-colnames(family_counts) <- family_names
-
-# Inspect the first few rows of the family-level count table.
-head(family_counts)
-
-# -----------------------------------------
-# Step 6: Run Maaslin3
-# -----------------------------------------
-#Reload metadata
-amylase_metadata <- read.csv("~/Desktop/Amylase_metadata_list060625.csv", row.names = 1)
-
-# Set a seed for reproducibility
-set.seed(1)
-
-# Run MaalLin3 (Genus Level)
-fit_out <- maaslin3(
-  input_data = genus_counts,
-  input_metadata = amylase_metadata,
-  output = 'genus_maaslin3_output',   # Specify your desired output directory name
-  formula = "~ Amylase",  # Replace with actual metadata columns; e.g., "~ diagnosis + age"
-  normalization = 'TSS',           # Total Sum Scaling normalization
-  transform = 'LOG',               # Log transformation (LOG means log2-transformed relative abundances)
-  augment = TRUE,                  # Data augmentation to deal with logistic regression issues
-  standardize = TRUE,              # Z-score standardizes continuous metadata variables
-  max_significance = 0.05,          # Maximum allowed FDR for significance
-  median_comparison_abundance = TRUE,  
-  median_comparison_prevalence = FALSE,
-  max_pngs = 250,                  # Maximum number of PNG plots to save (if applicable)
-  cores = 1                        # Number of CPU cores to use
-)
-
-# Run Maaslin3 (Family Level)
-fit_out <- maaslin3(
-  input_data = family_counts,
-  input_metadata = amylase_metadata,
-  output = 'family_maaslin3_output',   # Specify your desired output directory name
-  formula = "~ Amylase",  
-  normalization = 'TSS',           # Total Sum Scaling normalization
-  transform = 'LOG',               # Log transformation (LOG means log2-transformed relative abundances)
-  augment = TRUE,                  # Data augmentation to deal with logistic regression issues
-  standardize = TRUE,              # Z-score standardizes continuous metadata variables
-  max_significance = 0.05,          # Maximum allowed FDR for significance
-  median_comparison_abundance = TRUE,  
-  median_comparison_prevalence = FALSE,
-  max_pngs = 250,                  # Maximum number of PNG plots to save (if applicable)
-  cores = 1                        # Number of CPU cores to use
-)
-
-# -----------------------------------------
-# Step 7: Save Outputs as .csv(s)
-# -----------------------------------------
-library(readr)
-#Get working directory to determine the path to extract the tsv file from
-getwd()
-
-# Read the .tsv files
-    genus_all_results<- read_tsv("/gpfs/home/con472/genus_maaslin3_output/all_results.tsv")
-    family_all_results<- read_tsv("/gpfs/home/con472/family_maaslin3_output/all_results.tsv")
-    
-    # Check the first few rows of the data to ensure it was read correctly
-    print(head(genus_all_results))
-    print(head(family_all_results))
-    
-    # Write the tables to .csv files for easy future viewing (optional)
-write_csv(genus_all_results,("/gpfs/home/con472/genus_all_results.csv"))
-write_csv(family_all_results,("/gpfs/home/con472/family_all_results.csv"))
-
-
-# -----------------------------------------
-#This Script Plots 10 Most Differentially Abundant Taxa from Maaslin3 Anaylsis
-    #Run this script after running "DataProcessing_Maaslin3.R": Requires genus_all_results and family_all_results tables
-# -----------------------------------------
-
-# -----------------------------------------
-# Step 1: Load necessary libraries
-# -----------------------------------------
-library(ggplot2)
-library(dplyr)
-library(patchwork)
-
-# -----------------------------------------
-# Step 2: Identfify and Filter Out Top 10 Most Differentially Abundant Taxa
-# -----------------------------------------
-top10_mostdiff_genera <- genus_all_results %>%
-  filter(model == "abundance") %>% #Filters for abundance results
-  mutate(prevalence = N_not_zero / N) %>% #Calculates prevalence and adds to table
-  filter(prevalence > 0.10) %>% #filters for 10% prevalence
-  arrange(qval_individual) %>% #Arranges based on qcal_individual/FDR
-  head(10) #Selects for top 10 most differentially abundant
-
-top10_mostdiff_family <- family_all_results %>%
-  filter(model == "abundance") %>% #Filters for abundance results
-  mutate(prevalence = N_not_zero / N) %>% #Calculates prevalence and adds to table
-  filter(prevalence > 0.10) %>% #filters for 10% prevalence
-  arrange(qval_individual) %>% #Arranges based on qcal_individual/FDR
-  head(10) #Selects for top 10 most differentially abundant
-
-# -----------------------------------------
-# 3. Make Family-level Plot
-# -----------------------------------------
-maaslin_results_family <- top10_mostdiff_family %>%
-  mutate(q_category = case_when(
-    qval_individual < 0.05 ~ "q < 0.05",
-    qval_individual > 0.05  ~ "q > 0.05"
-  ),
-  n_label = paste0("n = ", N_not_zero))
-
-p_fam <- ggplot(maaslin_results_family, aes(x = coef, y = reorder(feature, coef))) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
-  geom_point(aes(color = q_category), size = 4) +
-  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
-                width = 0.2, color = "gray50") +
-  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
-  ggtitle("Family Level") +
-  labs(x = "Coefficient (Effect Size)",
-       y = "Family",
-       color = "FDR Range") +
-  scale_color_manual(values = c("q < 0.05"     = "#E41A1C",
-                                "q > 0.05" = "#377EB8")) +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(size = 14, hjust = 0.5),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    axis.text.y = element_text(size = 12, face = "italic")
-  )
-
-# -----------------------------------------
-# 4. Make Genera-level Plot (with core salivary genera starred in label)
-# -----------------------------------------
-
-# Define core oral genera
-core_genera <- c(
-  "Streptococcus", "Haemophilus", "Prevotella", "Neisseria", "Rothia",
-  "Veillonella", "Fusobacterium", "Megasphaera", "Atopobium", "Schaalia",
-  "Actinomyces", "Gemella", "Campylobacter", "Oribacterium", "Aggregatibacter",
-  "Leptotrichia", "Solobacterium", "Peptostreptococcus", "Ruminococcaceae_[G−1]",
-  "Capnocytophaga", "Lachnoanaerobaculum", "Stomatobaculum", "Peptostreptococcaceae_[XI][G−1]",
-  "Bergeyella", "Catonella", "Dialister", "Granulicatella", "Saccharibacteria_(TM7)_[G−1]"
-)
-
-# Add core flag and star to label
-maaslin_results_genera <- top10_mostdiff_genera %>%
-  mutate(
-    q_category = case_when(
-      qval_individual < 0.05 ~ "q < 0.05",
-      TRUE ~ "q > 0.05"
-    ),
-    genus_name = sapply(strsplit(as.character(feature), "_"), `[`, 1),
-    is_core = genus_name %in% core_genera,
-    feature_starred = ifelse(is_core, paste0(feature, " *"), feature),
-    n_label = paste0("n = ", N_not_zero)
-  )
-
-p_gen <- ggplot(maaslin_results_genera, aes(x = coef, y = reorder(feature_starred, coef))) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
-  geom_point(aes(color = q_category), size = 4) +
-  geom_errorbar(aes(xmin = coef - stderr, xmax = coef + stderr),
-                width = 0.2, color = "gray50") +
-  geom_text(aes(label = n_label), vjust = -1, size = 4, fontface = "italic") +
-  ggtitle("Genus Level") +
-  labs(x = "Coefficient (Effect Size)",
-       y = "Genus",
-       color = "FDR Range",
-       caption = "* Core Salivary Microbiome Member") +
-  scale_color_manual(values = c("q < 0.05" = "#E41A1C", "q > 0.05" = "#377EB8")) +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(size = 14, hjust = 0.5),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    axis.text.y = element_text(size = 12, face = "italic"),
-    plot.caption = element_text(hjust = 0.5, size = 11, face = "italic")
-  )
-# -----------------------------------------
-# 5. Combine the two plots
-# -----------------------------------------
-combined_plot <- p_fam + p_gen +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "right")
-
-# -----------------------------------------
-# 6. Label Plots
-# -----------------------------------------
-final_plot <- combined_plot +
-  plot_annotation(
-    title = "Top 10 Most Differentially Abundant Taxa for BAL Amylase",
-    subtitle = "10% Prevalence Threshold",
-    caption = "Left of 0: More Abundant in High Group; Right of 0: More Abundant in Low-Intermediate Group"
-  ) &
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 15),
-    plot.subtitle = element_text(hjust = 0.5, size = 13, face = "italic"),
-    plot.caption = element_text(hjust = 0.5, size = 12)
-  )
-# Print the final combined plot
-print(final_plot)
-
-# -----------------------------------------
-# 7. Save plot
-# -----------------------------------------
-ggsave("Diff_Abund_Top10.png", plot = final_plot, width = 13, height = 6, dpi = 300)
-ggsave("Diff_Abund_Top10.pdf", plot = final_plot, width = 13, height = 6, dpi = 300)
-ggsave("Diff_Abund_Top10.tiff", plot = final_plot, width = 13, height = 6, dpi = 300)
