@@ -8,7 +8,7 @@ date: "2025-05-31"
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 ```
 
-##Grouping each patient by antibiotic receipt
+## Grouping each patient by antibiotic receipt
 
 Start from the imputed dataframe (df2_imp) generated from the Table1.Rmd.
 
