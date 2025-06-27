@@ -4,15 +4,13 @@ output: html_document
 date: "2025-05-30"
 ---
 
-```{r setup, include=FALSE}
+```{r setup, echo=FALSE, include=FALSE}
 knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = TRUE)
 ```
 
 ## Generating dataset that will be used for demographics and outcomes (Table 1)
 
-The code chunk below lists the excel sheets that contain clinical and microbiological results from the cohort. After running this code chunk you will have the 'df2' dataframe in which each row corresponds to the first BAL and associated metadata for the patient.
-
-```{r, echo=TRUE}
+```{r, echo=FALSE}
 library(FSA)
 library(dplyr)
 library(stats)
@@ -89,6 +87,7 @@ df2$covid_19 <- df2$covid_19 %>% replace_na('Negative')
 
 
 ## Visualize missing data (Supplement Figure 2)
+
 ```{r pressure, echo=FALSE, fig.show='hide'}
 
 #First replace 'NA' in the BAL culture columns with the text 'NA' since there is nothing to impute in these cells, NA means no growth/normal flora.
@@ -100,6 +99,7 @@ vis_miss(df2)
 ```
 
 ## Impute missing data 
+
 ```{r, echo=FALSE, message=FALSE}
 df2_imp <- mice(df2,m=5,maxit=50,meth="cart",seed=500)
 df2_imp <- complete(df2_imp, 1)
@@ -273,7 +273,7 @@ list_of_labels <- list(amylase="BAL Fluid Amylase Level, U/L", edw_adm_age ="Age
 ```
 
 ## Get summary statistics for Low-Intermediate vs High BAL fluid amylase groups (Table 1)
-```{r, echo = TRUE, fig.show='hide'}
+```{r, echo = FALSE, fig.show='hide'}
 tapply(df2_imp$amylase, df2_imp$group, summary)
 Table1 <- df2_imp
 Table1 %>% select(group, amylase, edw_adm_age, bmi, gender, charlson_comorbidity_index, Cardiac_arrest, pt_immunocomp, peptic_ulcer_disease, cerebrovascular_disease, hemiplagia_or_paraplegia, dementia, episode_category, Culture_negative, covid_19, Polymicrobial, wbc_max, bal_wbc_count, bal_pct_neutro, hospital_los_days, total_icu_los_days, Mortality) %>% tbl_summary(by= group, statistic = list(all_continuous() ~ "{median} ({p25}, {p75})", all_categorical() ~ "{n} ({p}%)"), label=list_of_labels, ) %>% add_p(pvalue_fun = label_style_pvalue(digits = 2))
@@ -589,7 +589,7 @@ summary(cox)
 
 ## Sensitivity Analysis of Covid negative samples using different thresholds
 
-```{r}
+```{r, echo=FALSE}
 
 Time_to_event2 <- Time_to_event %>% mutate(Amylase_250=case_when(amylase < 250 ~ "Low-Intermediate BAL Amylase", amylase >= 250 ~ "High BAL Amylase"))
 Time_to_event2 <- Time_to_event2 %>% mutate(Amylase_400=case_when(amylase < 400 ~ "Low-Intermediate BAL Amylase", amylase >= 400 ~ "High BAL Amylase"))
@@ -627,7 +627,7 @@ arrange_ggsurvplots(splots, print = TRUE, nrow = 2, ncol = 2)
 
 ## Boxplots comparing median BAL fluid amylase levels based on presence or absence of a microbe
 
-```{r, echo=TRUE}
+```{r, echo=FALSE}
 
 Boxplot <- df2_imp %>% mutate('Staphylococcus aureus' = case_when(organism_1_name == "Staphylococcus aureus" ~ "1", organism_2_name == "Staphylococcus aureus" ~ "1", organism_3_name == "Staphylococcus aureus" ~ "1", organism_4_name == "Staphylococcus aureus" ~ "1", organism_5_name == "Staphylococcus aureus" ~ "1"))
 Boxplot <- Boxplot %>% mutate(Corynebacterium = case_when(organism_1_name == "Corynebacterium" ~ "1", organism_2_name == "Corynebacterium" ~ "1", organism_3_name == "Corynebacterium" ~ "1", organism_4_name == "Corynebacterium" ~ "1", organism_5_name == "Corynebacterium" ~ "1"))
@@ -653,7 +653,7 @@ print(p1)
 
 ## Get stats for each organism and correct for multiple comparisons
 
-```{r, echo=TRUE}
+```{r, echo=FALSE}
 Boxplot <- Boxplot %>% mutate(`Staphylococcus aureus` = replace_na(`Staphylococcus aureus`, "Absent"))
 Boxplot <- Boxplot %>% mutate(Corynebacterium = replace_na(Corynebacterium, "Absent"))
 Boxplot <- Boxplot %>% mutate(Pseudomonas = replace_na(Pseudomonas, "Absent"))
