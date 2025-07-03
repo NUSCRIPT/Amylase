@@ -342,6 +342,7 @@ barplot <- phyloseq::plot_bar(df_rel_abund, fill = "Order") + geom_bar(aes(fill 
 ```{r}
 
 #Convert counts to relative abundance
+sample_data(df_pruned)$Group <- amylase_metadata$Amylase
 df_pruned_rel <- transform_sample_counts(df_pruned, function(x) x / sum(x))
 
 #Prepare data and compute distances
@@ -384,7 +385,7 @@ p_pcoa_solid <- plot_ordination(df_pruned_rel, bray_pcoa, color = "Group") +
         legend.position = "right") +
   # Annotate the plot with PERMANOVA results
   annotate("text", x = Inf, y = Inf, label = perm_label,
-           hjust = 1.1, vjust = 1.1, size = 3, fontface = "italic")
+           hjust = 1.1, vjust = 1.1, size = 6, fontface = "italic")
 
 #Part B: PC1/PC2 Plots
 pc_df <- as.data.frame(bray_pcoa$vectors)
