@@ -75,6 +75,7 @@ df <- phyloseq::subset_taxa(df, !Genus %in% c("Chloroplast", "Mitochondria"))
 
 
 ## Load metadata table (assigns each sample to high or low-intermediate group for amylase)
+## If you cannot locate file path, go to file.choose() and copy path into the read.csv() below
 
 ```{r}
 amylase_metadata <- read.csv("Amylase_metadata_list_ambiguityremoved.csv")
