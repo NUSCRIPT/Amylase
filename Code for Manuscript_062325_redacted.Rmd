@@ -1,0 +1,723 @@
+---
+title: "Amylase Project"
+output: html_document
+date: "2025-05-30"
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = TRUE)
+```
+
+## Generating dataset that will be used for demographics and outcomes (Table 1)
+
+```{r, echo=FALSE}
+library(FSA)
+library(dplyr)
+library(stats)
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+library(tidyverse)
+library(ggpubr)
+library(lubridate)
+library(tibble)
+library(modelsummary)
+library(reshape)
+library(tidyr)
+library("survival")
+library("survminer")
+library(patchwork)
+library(fabricatr)
+library(mice)
+library(visdat)
+library(fabricatr)
+library(readxl)
+library(gtsummary)
+
+#Select BAL samples with an amylase value
+CDdataset <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/CDdataset.xlsx")
+EDW_bal_results <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/EDW_bal_results.xlsx")
+EDW_basic_endpoints <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/EDW_basic_endpoints.xlsx")
+Antibiotics <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/Antibiotics.xlsx")
+SCRIPT_Cardiac_Arrest <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/SCRIPT_Cardiac_Arrest.xlsx")
+Basic_endpoints052825 <- read_excel("C:/Users/cononye/Desktop/RStudio/Amylase/Basic_endpoints052825.xlsx")
+
+#Rename dataset and select all BALs that have an amylase value measured
+Amylase <- subset(CDdataset, !is.na(amylase))
+
+#Select the first BAL from each patient
+#Note that this may not necessarily correspond to the first enrollment intubation as not all enrollment intubations had an amylase value measured
+Amylase <- Amylase[grep("BAL-00", Amylase$bal_barcode), ]
+
+#Add a column for Mortality
+Amylase <- Amylase %>% mutate(Mortality = case_when(discharge_disposition_name == 'Died' ~ "1"))
+Amylase <- Amylase %>% mutate(Mortality = ifelse(is.na(Mortality), 0, Mortality))
+
+#Merge 'Amylase' dataframe and 'EDW_bal_results' since EDW_bal_results has the specific culture results
+Merged_df = merge(Amylase, EDW_bal_results, by.x=c("patient_ir_id", "bal_dt"), by.y=c("patient_ir_id", "bal_collection_date"))
+
+#Remove duplicate rows based on patient IRID
+df <- Merged_df[!duplicated(Merged_df$patient_ir_id),]
+
+#Historgram of Amylase distribution (Supplemental Figure 2)
+p <- ggplot(df, aes(log(amylase))) + geom_histogram(aes(y = ..density..), color = "#000000", fill = "#0099F8") + geom_density(color = "#000000", fill = "lightblue", alpha = 0.6) + theme_bw()
+p + labs(title="Density Plot of Distribution of BAL Amylase Levels", y= "Density", x="Log(BAL Amylase)") + theme(plot.title = element_text(hjust = 0.5))
+
+#Add column for Quartile and split quartiles
+#Get number of samples in each quartile
+df <- df %>% mutate(Quartile = split_quantile(amylase, 4))
+table(df$Quartile)
+
+#Get median and IQR for amylase
+tapply(df$amylase, df$Quartile, summary)
+
+#Add column called 'group' to compare Quartiles 1-3 to Quartile 4
+df$Quartile <- as.numeric(df$Quartile)
+df <- df %>% mutate(group = case_when(Quartile <= 3 ~ "Low-Intermediate BAL Amylase", Quartile > 3 ~ "High BAL Amylase"))
+
+
+#Subset df for Table 1 Data
+df2 <- df %>% select(patient_ir_id, day_of_hospitalization, day_of_intubation, bal_dt, pt_study_id, norepinephrine_avg, edw_adm_age, bmi, gender, ethnicity, pt_immunocomp, smoking_history, myocardial_infarction, congestive_heart_failure, cerebrovascular_disease, dementia, peptic_ulcer_disease, liver_disease, diabetes, hemiplagia_or_paraplegia, charlson_comorbidity_index, hospital_los_days, total_icu_los_days, cumulative_intubation_days, discharge_datetime, discharge_disposition_name, Mortality, temperature_max, norepinephrine_avg, fio2_avg, po2_fio2_ratio_avg, wbc_max, amylase, bal_wbc_count, bal_pct_neutro, gram_stain_report_organisms, organism_1_quantity, organism_1_name, organism_2_quantity, organism_2_name, organism_3_quantity, organism_3_name, organism_4_quantity, organism_4_name, organism_5_quantity, organism_5_name, organism_6_quantity, organism_6_name, episode_category, episode_etiology, Quartile, covid_19, covid_status_enrollment, sodium_avg, group, bal_barcode)
+
+df2$po2_fio2_ratio_avg <- as.numeric(df2$po2_fio2_ratio_avg)
+df2$covid_19 <- df2$covid_19 %>% replace_na('Negative')
+
+```
+
+
+## Visualize missing data (Supplement Figure 2)
+
+```{r pressure, echo=FALSE, fig.show='hide'}
+
+#First replace 'NA' in the BAL culture columns with the text 'NA' since there is nothing to impute in these cells, NA means no growth/normal flora.
+df2[35:49][is.na(df2[35:49])] <- 'NA'
+
+#Visualize missing data (Supplemental Figure 2)
+vis_miss(df2)
+
+```
+
+## Impute missing data 
+
+```{r, echo=FALSE, message=FALSE}
+df2_imp <- mice(df2,m=5,maxit=50,meth="cart",seed=500)
+df2_imp <- complete(df2_imp, 1)
+
+#Add Cardiac_arrest data from RedCap
+df2_imp <- merge(df2_imp, SCRIPT_Cardiac_Arrest, by.x = "pt_study_id", by.y = "pt_study_id")
+
+#Visualize missing data again to ensure there are no longer any missing datapoints
+vis_miss(df2_imp)
+```
+
+## Rename organisms to genus level
+
+```{r, echo=FALSE, fig.show='hide'}
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Acinetobacter baumannii complex"] <- "Acinetobacter"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Neisseria meningitidis"] <- "Neisseria"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Viridans streptococcus #3"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Viridans Streptococcus Group"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Klebsiella (Enterobacter) aerogenes"] <- "Klebsiella"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Pseudomonas aeruginosa (Encapsulated Strain)"] <- "Pseudomonas"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Beta Hemolytic Streptococci, not Group A, B, C, D, F, or G"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Burkholderia cepacia complex"] <- "Burkholderia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Burkholderia cepacia complex (presumptive)"] <- "Burkholderia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Chryseobacterium indologenes"] <- "Chryseobacterium"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Chryseobacterium indologenes (presumptive)"] <- "Chryseobacterium"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Citrobacter koseri"] <- "Citrobacter"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Corynebacterium species"] <- "Corynebacterium"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Elizabethkingia meningoseptica"] <- "Elizabethkingia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Enterobacter aerogenes"] <- "Enterobacter"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Enterobacter cloacae complex"] <- "Enterobacter"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Enterobacter cloacae complex (ESBL Positive)"] <- "Enterobacter"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Escherichia coli (ESBL Positive) "] <- "Escherichia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Escherichia coli"] <- "Escherichia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Haemophilus influenzae Beta Lactamase Positive"] <- "Haemophilus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Haemophilus influenzae Beta Lactamase Negative"] <- "Haemophilus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Beta Hemolytic Streptococci, not Group A, B, C, D, F, or G"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Viridans streptococcus"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Yeast, Not Cryptococcus Species"] <- "Yeast"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Chryseobacterium indologenes"] <- "Chryseobacterium"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Pseudomonas aeruginosa"] <- "Pseudomonas"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Serratia marcescens"] <- "Serratia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Serratia liquefaciens"] <- "Serratia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Streptococcus mitis oralis group"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Enterococcus faecalis"] <- "Enterococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Enterococcus faecium (Vancomycin Resistant)"] <- "Enterococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Escherichia coli (ESBL Positive)"] <- "Escherichia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Hafnia alvei"] <- "Hafnia"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Klebsiella pneumoniae (ESBL Positive)"] <- "Klebsiella"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Lactobacillus species"] <- "Lactobacillus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Morganella morganii"] <- "Morganella"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Neisseria species"] <- "Neisseria"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Methicillin-Resistant Staphylococcus aureus"] <- "Staphylococcus aureus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Stenotrophomonas maltophilia"] <- "Stenotrophomonas"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Stomatococcus species"] <- "Stomatococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Streptococcus agalactiae (Group B)"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Streptococcus pseudopneumoniae"] <- "Streptococcus"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Klebsiella pneumoniae"] <- "Klebsiella"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_1_name[df2_imp$organism_1_name=="Candida albicans"] <- "Candida"
+
+
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Beta Hemolytic Streptococci, Group C"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Beta Hemolytic Streptococci, Group F"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Beta Hemolytic Streptococci, Group G"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Beta Hemolytic Streptococci, not Group A, B, C, D, F, or G"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Viridans streptococcus #2"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Viridans Streptococcus Group"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Citrobacter koseri"] <- "Citrobacter"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Corynebacterium species"] <- "Corynebacterium"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Enterococcus faecalis"] <- "Enterococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Enterococcus faecium"] <- "Enterococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Enterococcus faecium (Vancomycin Resistant)"] <- "Enterococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Escherichia coli (ESBL Positive)"] <- "Escherichia"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Klebsiella pneumoniae"] <- "Klebsiella"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Klebsiella pneumoniae (ESBL Positive)"] <- "Klebsiella"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Lactobacillus species"] <- "Lactobacillus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Neisseria species"] <- "Neisseria"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Proteus mirabilis"] <- "Proteus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Serratia marcescens"] <- "Serratia"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Methicillin-Resistant Staphylococcus aureus"] <- "Staphylococcus aureus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Pseudomonas aeruginosa"] <- "Pseudomonas"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Stomatococcus species"] <- "Stomatococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Streptococcus pneumoniae"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Streptococcus pseudopneumoniae"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Viridans streptococcus"] <- "Streptococcus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Yeast, Not Cryptococcus Species"] <- "Yeast"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Yeast, Not Cryptococcus Species #2"] <- "Yeast"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Haemophilus influenzae Beta Lactamase Positive"] <- "Haemophilus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Haemophilus influenzae Beta Lactamase Negative"] <- "Haemophilus"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_2_name[df2_imp$organism_2_name=="Candida albicans"] <- "Candida"
+
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Staphylococcus aureus #2"] <- "Staphylococcus aureus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Lactobacillus species #2"] <- "Lactobacillus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Viridans streptococcus #2"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Viridans Streptococcus Group"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Beta Hemolytic Streptococci, Group C"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Beta Hemolytic Streptococci, Group F"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Beta Hemolytic Streptococci, Group G"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Pseudomonas aeruginosa #2 (Encapsulated Strain)"] <- "Pseudomonas"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Achromobacter species"] <- "Achromobacter "
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Acinetobacter baumannii complex Cefiderocol MIC = 0.5, No Interpertation"] <- "Acinetobacter"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Citrobacter koseri"] <- "Citrobacter"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Corynebacterium species"] <- "Corynebacterium"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Enterococcus faecium"] <- "Enterococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Granulicatella adiacens"] <- "Granulicatella"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Haemophilus influenzae Beta Lactamase Negative"] <- "Haemophilus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Haemophilus influenzae Beta Lactamase Positive"] <- "Haemophilus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Haemophilus influenzae Beta Lactamase Negative"] <- "Haemophilus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Yeast, Not Cryptococcus Species"] <- "Yeast"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Pseudomonas aeruginosa"] <- "Pseudomonas"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Viridans streptococcus"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Proteus mirabilis"] <- "Proteus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Neisseria species"] <- "Neisseria"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Lactobacillus species"] <- "Lactobacillus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="streptococcus"] <- "Streptococcus"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_3_name[df2_imp$organism_3_name=="Candida albicans"] <- "Candida"
+
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Arcanobacterium haemolyticum"] <- "Arcanobacterium"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Corynebacterium species"] <- "Corynebacterium"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Enterococcus faecalis"] <- "Enterococcus"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Enterococcus raffinosus"] <- "Enterococcus"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Hafnia alvei"] <- "Hafnia"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Klebsiella pneumoniae"] <- "Klebsiella"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Neisseria species"] <- "Neisseria"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Serratia marcescens"] <- "Serratia"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Viridans streptococcus"] <- "Streptococcus"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Yeast, Not Cryptococcus Species"] <- "Yeast"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_4_name[df2_imp$organism_4_name=="Candida albicans"] <- "Candida"
+
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Acinetobacter ursingii"] <- "Acinetobacter"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Haemophilus Streptococcus constellatus "] <- "Haemophilus"
+df2_imp$organism_6_name[df2_imp$organism_6_name=="Corynebacterium species"] <- "Corynebacterium"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Streptococcus constellatus"] <- "Streptococcus"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Haemophilus influenzae Beta Lactamase Negative"] <- "Haemophilus"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_5_name[df2_imp$organism_5_name=="Candida albicans"] <- "Candida"
+df2_imp$organism_6_name[df2_imp$organism_6_name=="Candida glabrata"] <- "Candida"
+df2_imp$organism_6_name[df2_imp$organism_6_name=="Candida tropicalis"] <- "Candida"
+df2_imp$organism_6_name[df2_imp$organism_6_name=="Candida albicans"] <- "Candida"
+```
+
+## Get additional descriptive variables like number of culture negative samples, number of polymicrobial samples and re-name columns.
+```{r, echo=FALSE, fig.show='hide'}
+#Find culture-negative samples which are the ones where the organism 1 name is NA, meaning no bacteria grew on culture
+df2_imp <- df2_imp %>% mutate(Culture_negative = case_when(organism_1_name == 'NA' ~ "Yes"))
+df2_imp$Culture_negative <- df2_imp$Culture_negative %>% replace_na('No')
+
+#Find polymicrobial samples, meaning the organism_1_name and organism_2_name columns are not blank
+df2_imp <- df2_imp %>% mutate(Polymicrobial = case_when(organism_1_name != 'NA' & organism_2_name != 'NA' ~ "Yes"))
+df2_imp$Polymicrobial <- df2_imp$Polymicrobial %>% replace_na('No')
+
+#Rename columns for Table 1
+df2_imp$Mortality[df2_imp$Mortality=="0"] <- "Alive"
+df2_imp$Mortality[df2_imp$Mortality=="1"] <- "Deceased"
+df2_imp$hemiplagia_or_paraplegia[df2_imp$hemiplagia_or_paraplegia=="0"] <- "No"
+df2_imp$hemiplagia_or_paraplegia[df2_imp$hemiplagia_or_paraplegia=="2"] <- "Yes"
+df2_imp$episode_category[df2_imp$episode_category=="CAP"] <- "Community Acquired Pneumonia"
+df2_imp$episode_category[df2_imp$episode_category=="HAP"] <- "Hospital Acquired Pneumonia" 
+df2_imp$episode_category[df2_imp$episode_category=="NPC"] <- "Non Pneumonia Control"
+df2_imp$episode_category[df2_imp$episode_category=="VAP"] <- "Ventilator Associated Pneumonia"
+
+list_of_labels <- list(amylase="BAL Fluid Amylase Level, U/L", edw_adm_age ="Age, years", bmi = "Body Mass Index, kg/m2", gender="Gender, n (%)", charlson_comorbidity_index= "Charlson Comorbidity Index", Cardiac_arrest="Cardiac Arrest Prior to Intubation, n (%)", pt_immunocomp="Immunocompromised, n (%)", peptic_ulcer_disease="Peptic Ulcer Disease, n (%)", cerebrovascular_disease="Cerebrovascular Disease, n (%)", hemiplagia_or_paraplegia="Hemiplegia or Paraplegia, n (%)", Culture_negative="Negative BAL Culture, n (%)", dementia="Dementia, n (%)", episode_category="Pneumonia Type, n (%)", covid_19="SARS CoV2 Positive, n (%)", Polymicrobial="Polymicrobial BAL Culture, n (%)", wbc_max="Peripheral Blood Leukocyte Count, cells/microliter", bal_wbc_count="BAL Leukocyte Count, cells/microliter", bal_pct_neutro="BAL Neutrophil Percentage", hospital_los_days="Hospital Length of Stay, days", total_icu_los_days="Total ICU Length of Stay, days", Mortality="Hospital Discharge Status, n (%)")
+```
+
+## Get summary statistics for Low-Intermediate vs High BAL fluid amylase groups (Table 1)
+```{r, echo = FALSE, fig.show='hide'}
+tapply(df2_imp$amylase, df2_imp$group, summary)
+Table1 <- df2_imp
+Table1 %>% select(group, amylase, edw_adm_age, bmi, gender, charlson_comorbidity_index, Cardiac_arrest, pt_immunocomp, peptic_ulcer_disease, cerebrovascular_disease, hemiplagia_or_paraplegia, dementia, episode_category, Culture_negative, covid_19, Polymicrobial, wbc_max, bal_wbc_count, bal_pct_neutro, hospital_los_days, total_icu_los_days, Mortality) %>% tbl_summary(by= group, statistic = list(all_continuous() ~ "{median} ({p25}, {p75})", all_categorical() ~ "{n} ({p}%)"), label=list_of_labels, ) %>% add_p(pvalue_fun = label_style_pvalue(digits = 2))
+```
+
+## Get summary statistics for Low-Intermediate vs High BAL fluid amylase groups when Covid status is negative (Supplement Table 1)
+
+```{r}
+Table1_non_covid <- subset(Table1, covid_19 == "Negative")
+
+Table1_non_covid  %>% select(group, amylase, edw_adm_age, bmi, gender, charlson_comorbidity_index, Cardiac_arrest, pt_immunocomp, peptic_ulcer_disease, cerebrovascular_disease, hemiplagia_or_paraplegia, dementia, episode_category, Culture_negative, covid_19, Polymicrobial, wbc_max, bal_wbc_count, bal_pct_neutro, hospital_los_days, total_icu_los_days, Mortality) %>% tbl_summary(by= group, statistic = list(all_continuous() ~ "{median} ({p25}, {p75})", all_categorical() ~ "{n} ({p}%)"), label=list_of_labels, ) %>% add_p(pvalue_fun = label_style_pvalue(digits = 2))
+
+```
+
+
+```{r, echo=FALSE}
+#Find cases where Gram stain is positive for culture negatives
+#The output is significant
+cx_neg <- df2_imp %>% mutate(Gram_stain = case_when(gram_stain_report_organisms == 
+'Budding Yeast Cells with Pseudohyphae Seen' ~ "Negative", 
+gram_stain_report_organisms == 'Budding yeast seen' ~ "Negative", 
+gram_stain_report_organisms == 'Budding yeast with pseudohyphae seen' ~ "Negative", gram_stain_report_organisms == 'NA' ~ "Negative", 
+gram_stain_report_organisms == 'No organisms seen' ~ "Negative", 
+gram_stain_report_organisms == 'No Organisms Seen.' ~ "Negative", 
+gram_stain_report_organisms == 'Yeast' ~ "Negative", 
+gram_stain_report_organisms == 'Yeast Seen' ~ "Negative",))
+
+cx_neg$Gram_stain = cx_neg$Gram_stain %>% replace_na("Positive")
+cx_neg %>% select(group, Gram_stain) %>% tbl_summary(by= group, statistic = list(all_categorical() ~ "{n} / {N} ({p}%)")) %>% add_p(pvalue_fun = function(x) style_pvalue(x, digits = 2))
+```
+
+## Evaluate significant demographics using BAL amylase as a continuous variable 
+```{r, echo=FALSE}
+df2_imp$Quartile <- as.factor(df2_imp$Quartile)
+a <- ggplot(df2_imp, aes(x=log(amylase), y= log(bal_wbc_count))) + scale_color_viridis_d()
+a <- a + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 12, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL WBC Count") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+b <- ggplot(df2_imp, aes(x=log(amylase), y=edw_adm_age)) + scale_color_viridis_d()
+b <- b + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 105, size=4) + xlab("Log(BAL Amylase)") + ylab("Age") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12))
+
+c <- ggplot(df2_imp, aes(x=log(amylase), y= bal_pct_neutro)) + scale_color_viridis_d()
+c <- c + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 110, size=4) + xlab("Log(BAL Amylase)") + ylab("BAL % Neutrophils") + theme_bw() + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), legend.position='none')
+
+d <- ggplot(df2_imp, aes(x=log(amylase), y= bmi)) + scale_color_viridis_d()
+d <- d + geom_point(aes(color=Quartile), size=4) + geom_smooth(method = "loess") + stat_cor(method = "pearson", label.x = 3, label.y = 75, size=4) + xlab("Log(BAL Amylase)") + ylab("Body Mass Index") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y=element_text(size=12), legend.position='none')
+
+#The statistic here is NS after adjustment for multiple comparisons that was done in the code chunks below
+e <- ggplot(df2_imp, aes(x=gender, y=log(amylase))) + geom_boxplot(aes(fill=gender)) + scale_fill_viridis_d()
+e <- e + xlab("Gender") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Male", "Female")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4, annotations="NS.") + scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+f <- ggplot(df2_imp, aes(x =Cardiac_arrest, y=log(amylase))) + geom_boxplot(aes(fill=Cardiac_arrest)) + scale_fill_viridis_d()
+f <- f + xlab("Cardiac Arrest Prior to BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4) + scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+g <- ggplot(df2_imp, aes(x=Culture_negative, y=log(amylase))) + geom_boxplot(aes(fill=Culture_negative)) + scale_fill_viridis_d()
+g <- g + xlab("Culture Negative BAL") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4) + scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+h <- ggplot(df2_imp, aes(x=Polymicrobial, y=log(amylase))) + geom_boxplot(aes(fill=Polymicrobial)) + scale_fill_viridis_d()
+h <- h + xlab("Polymicrobial Culture") + ylab("Log(BAL Amylase)") + theme_bw() + theme(axis.title.x = element_text(size=12), axis.title.y = element_text(size=12), axis.text.x=element_text(size=12), legend.position='none') + geom_signif(comparisons=list(c("Yes", "No")), map_signif_level = TRUE, y_position = 9.5, tip_length = 0,  textsize = 4) + scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+Figure1 <- ggarrange(b, d, a, c, e, f, g, h,  labels = c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 2, nrow = 4)
+
+print(Figure1)
+```
+
+## Get statistics to determine the presence of a linear relationship.
+The p value reflects whether or not a linear relationship is present between the two continuous variables for the scatter plots. The p value for the boxplots reflects a difference between median amylase levels based on the presence or absence of a categorical variable (like cardiac arrest, gender).
+
+```{r, echo=FALSE}
+#Get statistics for Figure 1
+correlation_test_wbc <- cor.test(log(df2_imp$amylase), df2_imp$bal_wbc_count, method = "pearson")
+print(correlation_test_wbc)
+
+correlation_test_pmn <- cor.test(log(df2_imp$amylase), df2_imp$bal_pct_neutro, method = "pearson")
+print(correlation_test_pmn)
+p_value <- correlation_test_pmn$p.value
+
+correlation_test_age <- cor.test(log(df2_imp$amylase), df2_imp$edw_adm_age, method = "pearson")
+print(correlation_test_age)
+p_value <- correlation_test_age$p.value
+
+correlation_test_bmi <- cor.test(log(df2_imp$amylase), df2_imp$bmi, method = "pearson")
+print(correlation_test_bmi)
+p_value <- correlation_test_bmi$p.value
+
+gender <- wilcox.test(log(df2_imp$amylase) ~ df2_imp$gender)
+print(gender)
+
+cardiac_arrest <- wilcox.test(log(df2_imp$amylase) ~ df2_imp$Cardiac_arrest)
+print(cardiac_arrest)
+
+culture_negative <- wilcox.test(log(df2_imp$amylase) ~ df2_imp$Culture_negative)
+print(culture_negative)
+
+Polymicrobial <- wilcox.test(log(df2_imp$amylase) ~ df2_imp$Polymicrobial)
+print(Polymicrobial)  
+```
+
+## Adjust Figure 1 Variables for Multiple Comparisons
+```{r, echo = FALSE}
+#Create a table with label and p values
+p_value_table <- data.frame(Name=c("BAL_wbc_count", "BAL_pct_pmn", "Age", "BMI", "Gender", "Cardiac_arrest", "Culture_negative", "Polymicrobial"), p_values=c(0.00000000000009721, 0.00000000000000022, 0.000002346, 0.002751, 0.03449, 0.11, 0.0000000000001091, 0.0000000007334))
+                            
+#Enter each p value from the above statistical tests
+p_values=c(0.00000000000009721, 0.00000000000000022, 0.000002346, 0.002751, 0.03449, 0.11, 0.0000000000001091, 0.0000000007334)
+p_adjusted <- p.adjust(p_values, method = "bonferroni")
+p_value_table$p_adjusted <- p_adjusted <- p.adjust(p_values, method = "bonferroni")
+print(p_value_table)
+```
+
+## Generate time-to-event curves for the time to extubation
+
+```{r, echo=FALSE}
+
+#Make Mortality Numeric since this variable will be used for censoring in the survival curve
+df2_imp$Mortality[df2_imp$Mortality=="Alive"] <- "0"
+df2_imp$Mortality[df2_imp$Mortality=="Deceased"] <- "1"
+
+#Add columns for time from intubation to bal, duration of intubation, and time from extubation to discharge
+df2_imp_extubation <- EDW_basic_endpoints[EDW_basic_endpoints$pt_study_id %in% c(df2_imp$pt_study_id),]
+Extubation_df <- merge(df2_imp, df2_imp_extubation, by=("pt_study_id"))
+
+#BALs from the patient's enrollment intubation 
+Extubation_df2 <- Extubation_df
+Extubation_df2$intubation_duration <- time_length(Extubation_df2$First_intub_stop - Extubation_df2$First_intub_start, unit="days")
+Extubation_df2$intubation_to_bal <- time_length(Extubation_df2$bal_dt - Extubation_df2$First_intub_start, unit="days")
+Extubation_df2$extubation_to_discharge <- time_length(Extubation_df2$discharge_datetime.x - Extubation_df2$First_intub_stop, unit="days")
+Extubation_df3 <- Extubation_df2[!Extubation_df2$pt_study_id %in% c("SCRIPT IDs Redacted"),]
+
+#Bals that were done during a second or third intubation
+Second_intubation <- Extubation_df[Extubation_df$pt_study_id %in% c("SCRIPT IDs Redacted"),]
+Third_intubation <- Extubation_df[Extubation_df$pt_study_id %in% c("SCRIPT IDs Redacted"),]
+
+Second_intubation$intubation_duration <- time_length(Second_intubation$Second_intub_stop - Second_intubation$Second_intub_start, unit="days")
+Third_intubation$intubation_duration <- time_length(Third_intubation$Third_intub_stop - Third_intubation$Third_intub_start, unit="days")
+
+Second_intubation$intubation_to_bal <- time_length(Second_intubation$bal_dt - Second_intubation$Second_intub_start, unit="days")
+Third_intubation$intubation_to_bal <- time_length(Third_intubation$bal_dt - Third_intubation$Third_intub_start, unit="days")
+
+Second_intubation$extubation_to_discharge <- time_length(Second_intubation$discharge_datetime.x - Second_intubation$Second_intub_stop, unit="days")
+Third_intubation$extubation_to_discharge <- time_length(Third_intubation$discharge_datetime.x - Third_intubation$Third_intub_stop, unit="days")
+
+Extubation_df3$Intubationnumber <- c("First Intubation")
+Second_intubation$Intubationnumber <- c("Second Intubation")
+Third_intubation$Intubationnumber <- c("Third Intubation")
+
+#Combine all samples 
+All_samples <- rbind(Extubation_df3, Second_intubation, Third_intubation)
+
+#Find duration of intubation for both groups
+tapply(All_samples$intubation_duration, All_samples$group, summary)
+wilcox.test(intubation_duration ~ group, data=All_samples)
+
+#Generate density plot
+density_plot <- ggplot(All_samples, aes(x=intubation_duration, fill=group)) + geom_density(alpha=0.4)
+dns_plot <- density_plot + scale_fill_brewer(palette="Dark2") + labs(x="Days of Intubation (For Intubation Associated with the BAL)", y="Density", title = "Density Plot of Intubation Duration") + theme(legend.position="bottom", axis.title.x = element_text(size=14), axis.text.y = element_text(size=14), axis.title.y = element_text(size=14), legend.title = element_text(size=14), legend.text = element_text(size=14) , plot.title=element_text(face="bold", hjust = 0.5), axis.text.x=element_text(size=14)) + guides(fill=guide_legend(title="Group")) + xlim(0,75)
+
+print(dns_plot)
+
+```
+
+## Density Plots for Non-Covid Patients
+
+```{r, echo=FALSE}
+
+#Generate density plot for Covid negative samples
+Covid_negative <- subset(All_samples, covid_19 =="Negative")
+
+dns_plot_covid_negative <- ggplot(Covid_negative, aes(x=intubation_duration, fill=group)) + geom_density(alpha=0.4)
+dns_plot2 <- dns_plot_covid_negative + scale_fill_brewer(palette="Dark2") + labs(x="Days of Intubation (For Intubation Associated with the BAL)", y="Density", title = "Density Plot of Intubation Duration For Non-Covid Patients (n=374)") + theme(legend.position="bottom", axis.title.x = element_text(size=14), axis.text.y = element_text(size=14), axis.title.y = element_text(size=14), legend.title = element_text(size=14), legend.text = element_text(size=14) , plot.title=element_text(face="bold", hjust = 0.5), axis.text.x=element_text(size=14)) + guides(fill=guide_legend(title="Group")) + xlim(0,75)
+
+print(dns_plot2)
+
+
+```
+
+
+##Time to Event Curves for Cohort
+
+Create a dataframe where the event is time to extubation and the censoring event is patients who died less than 48 hours after extubation. 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+#Create dataframe
+Time_to_event <- All_samples %>% select(pt_study_id, amylase, group, intubation_duration, extubation_to_discharge, Mortality, norepinephrine_avg, edw_adm_age, Cardiac_arrest, gender, bmi, covid_19)
+
+#Find difference in median intubation duration between groups in the entire cohort
+tapply(Time_to_event$intubation_duration, Time_to_event$group, summary)
+kruskal.test(intubation_duration ~ group, data=Time_to_event)
+  
+#Create a column called 'status' where 0 is the patient who was censored before experiencing the event, and 1 was the event (extubation)
+#We are censoring patients who died and had a time from extubation to discharge < 2 days, meaning they either died on the vent or possibly palliatively extubated
+Time_to_event <- Time_to_event %>% mutate(status=case_when(Mortality=="1" & extubation_to_discharge < 2 ~ "0"))
+
+
+#Status '1' are those who were extubated and alive
+Time_to_event$status[is.na(Time_to_event$status)] <- '1'
+Time_to_event$status <- as.numeric(Time_to_event$status)
+
+
+#Generate time-to-event curve for time to extubation
+fit <- survfit(Surv(intubation_duration, status) ~ group, data=Time_to_event)
+print(fit)
+
+km_curve <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = TRUE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,45), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"), legend.position="bottom")
+
+print(km_curve)
+
+#Table showing each individual event
+d <- data.frame(time = fit$time, n.risk = fit$n.risk, n.event = fit$n.event, n.censor = fit$n.censor, surv = fit$surv, upper = fit$upper, lower = fit$lower)
+
+```
+
+## Log rank test for p value for KM curve, Cox proportional hazards
+
+```{r, echo=FALSE}
+#Get log rank test p value from km curve
+surv_pvalue(fit, combine = TRUE, get_coord = TRUE)
+
+##Cox proportional hazards with adjusting for confounders
+cox <- coxph(Surv(intubation_duration, status) ~ group + edw_adm_age + gender + Cardiac_arrest + Mortality + covid_19, data = Time_to_event)
+summary(cox)
+```
+
+## Sensitivity Analysis for All Samples Using Different Amylase Thresholds and For Patients Discharged from Hospital Alive
+
+```{r, echo=FALSE}
+#Sensitivity analysis using different BAL thresholds
+Time_to_event2 <- Time_to_event %>% mutate(Amylase_250=case_when(amylase < 250 ~ "Low-Intermediate BAL Amylase", amylase >= 250 ~ "High BAL Amylase"))
+Time_to_event2 <- Time_to_event2 %>% mutate(Amylase_400=case_when(amylase < 400 ~ "Low-Intermediate BAL Amylase", amylase >= 400 ~ "High BAL Amylase"))
+Time_to_event2 <- Time_to_event2 %>% mutate(Amylase_500=case_when(amylase < 500 ~ "Low-Intermediate BAL Amylase", amylase >= 500 ~ "High BAL Amylase"))
+
+
+#Generate time-to-event curve for time to extubation for Alive
+Alive <- subset(All_samples, Mortality == "0")
+fit <- survfit(Surv(intubation_duration) ~ group, data=Alive)
+print(fit)
+p <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = FALSE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,45), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Discharged from Hospital Alive", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"), legend.position="bottom")
+
+#Generate KM curves using different amylase thresholds
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_250, data=Time_to_event2)
+print(fit)
+p1 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 250 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c(" Over 250","Less Than 250")) 
+
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_400, data=Time_to_event2)
+print(fit)
+p2 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 400 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c(" Over 400","Less Than 400")) 
+
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_500, data=Time_to_event2)
+print(fit)
+p3 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE,  linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 500 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 500","Less Than 500")) 
+
+splots <- list()
+splots[[1]] <- p
+splots[[2]] <- p2
+splots[[3]] <- p1
+splots[[4]] <- p3
+
+arrange_ggsurvplots(splots, print = TRUE, nrow = 2, ncol = 2)
+```
+
+## Find log rank p value for KM curve for patients discharged alive
+```{r echo=FALSE}
+fit <- survfit(Surv(intubation_duration) ~ group, data=Alive)
+print(fit)
+surv_pvalue(fit, combine = TRUE, get_coord = TRUE)
+
+```
+
+
+## Covid negative KM Curves
+
+```{r}
+#Create dataframe
+Covid_negative <- subset(All_samples, covid_19 =="Negative")
+
+Time_to_event_noncovid <- Covid_negative %>% select(pt_study_id, amylase, group, intubation_duration, extubation_to_discharge, Mortality, norepinephrine_avg, edw_adm_age, Cardiac_arrest, gender, bmi, covid_19)
+
+#Find difference in median intubation duration between groups in the entire cohort
+tapply(Time_to_event_noncovid$intubation_duration, Time_to_event_noncovid$group, summary)
+kruskal.test(intubation_duration ~ group, data=Time_to_event_noncovid)
+  
+#Create a column called 'status' where 0 is the patient who was censored before experiencing the event, and 1 was the event (extubation)
+#We are censoring patients who died and had a time from extubation to discharge < 2 days, meaning they either died on the vent or possibly palliatively extubated
+Time_to_event_noncovid <- Time_to_event_noncovid %>% mutate(status=case_when(Mortality=="1" & extubation_to_discharge < 2 ~ "0"))
+
+
+#Status '1' are those who were extubated and alive
+Time_to_event_noncovid$status[is.na(Time_to_event_noncovid$status)] <- '1'
+Time_to_event_noncovid$status <- as.numeric(Time_to_event_noncovid$status)
+
+
+#Generate time-to-event curve for time to extubation
+fit <- survfit(Surv(intubation_duration, status) ~ group, data=Time_to_event_noncovid)
+
+print(fit)
+
+km_curve <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = TRUE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,45), font.main = c(16, "bold"), font.x = c(14, "bold"), font.y = c(14, "bold"), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "Probability of Remaining Intubated", font.legend=c(12, "bold"), title="Non-Covid Pneumonia Subgroup", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"), legend.position="bottom")
+
+print(km_curve)
+
+```
+
+## Cox proportional hazards for Covid negative patients
+
+```{r}
+#Get log rank test p value from km curve
+surv_pvalue(fit, combine = TRUE, get_coord = TRUE)
+
+##Cox proportional hazards with adjusting for confounders
+cox <- coxph(Surv(intubation_duration, status) ~ group + edw_adm_age + gender + Cardiac_arrest + Mortality, data = Time_to_event_noncovid)
+summary(cox)
+
+```
+
+## Sensitivity Analysis of Covid negative samples using different thresholds
+
+```{r, echo=FALSE}
+
+Time_to_event2 <- Time_to_event %>% mutate(Amylase_250=case_when(amylase < 250 ~ "Low-Intermediate BAL Amylase", amylase >= 250 ~ "High BAL Amylase"))
+Time_to_event2 <- Time_to_event2 %>% mutate(Amylase_400=case_when(amylase < 400 ~ "Low-Intermediate BAL Amylase", amylase >= 400 ~ "High BAL Amylase"))
+Time_to_event2 <- Time_to_event2 %>% mutate(Amylase_500=case_when(amylase < 500 ~ "Low-Intermediate BAL Amylase", amylase >= 500 ~ "High BAL Amylase"))
+
+
+#Generate time-to-event curve for time to extubation for Alive
+Alive_noncovid <- subset(Covid_negative, Mortality == "0")
+fit <- survfit(Surv(intubation_duration) ~ group, data=Alive_noncovid)
+print(fit)
+p <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, risk.table = FALSE, risk.table.col = "strata", linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,45), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Discharged from Hospital Alive (Non Covid Cohort)", break.x.by=5, legend.title="BAL Amylase Group", legend.labs=c("High","Low-Intermediate"), legend.position="bottom")
+
+#Generate KM curves using different amylase thresholds
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_250, data=Time_to_event2)
+print(fit)
+p1 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 250 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c(" Over 250","Less Than 250")) 
+
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_400, data=Time_to_event2)
+print(fit)
+p2 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE, linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12, "plain"), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 400 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c(" Over 400","Less Than 400")) 
+
+fit <- survfit(Surv(intubation_duration, status) ~ Amylase_500, data=Time_to_event2)
+print(fit)
+p3 <- ggsurvplot(fit, pval = TRUE, conf.int = TRUE,  linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(), palette = c("Dark2"), xlim=c(0,30), font.main = c(14), font.x = c(10), font.y = c(14), font.tickslab = c(12), xlab = "Time to Extubation in Days", ylab= "", font.legend=c(12), title="Amylase Threshold 500 U/L", break.x.by=5, legend.title="BAL Amylase (U/L)", legend.labs=c("Over 500","Less Than 500")) 
+
+splots <- list()
+splots[[1]] <- p
+splots[[2]] <- p2
+splots[[3]] <- p1
+splots[[4]] <- p3
+
+arrange_ggsurvplots(splots, print = TRUE, nrow = 2, ncol = 2)
+```
+
+
+## Boxplots comparing median BAL fluid amylase levels based on presence or absence of a microbe
+
+```{r, echo=FALSE}
+
+Boxplot <- df2_imp %>% mutate('Staphylococcus aureus' = case_when(organism_1_name == "Staphylococcus aureus" ~ "1", organism_2_name == "Staphylococcus aureus" ~ "1", organism_3_name == "Staphylococcus aureus" ~ "1", organism_4_name == "Staphylococcus aureus" ~ "1", organism_5_name == "Staphylococcus aureus" ~ "1"))
+Boxplot <- Boxplot %>% mutate(Corynebacterium = case_when(organism_1_name == "Corynebacterium" ~ "1", organism_2_name == "Corynebacterium" ~ "1", organism_3_name == "Corynebacterium" ~ "1", organism_4_name == "Corynebacterium" ~ "1", organism_5_name == "Corynebacterium" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Pseudomonas' = case_when(organism_1_name == "Pseudomonas" ~ "1", organism_2_name == "Pseudomonas" ~ "1", organism_3_name == "Pseudomonas" ~ "1", organism_4_name == "Pseudomonas" ~ "1", organism_5_name == "Pseudomonas" ~ "1"))
+Boxplot <- Boxplot %>% mutate(Yeast = case_when(organism_1_name == "Yeast" ~ "1", organism_2_name == "Yeast" ~ "1", organism_3_name == "Yeast" ~ "1", organism_4_name == "Yeast" ~ "1", organism_5_name == "Yeast" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Streptococcus' = case_when(organism_1_name == "Streptococcus" ~ "1", organism_2_name == "Streptococcus" ~ "1", organism_3_name == "Streptococcus" ~ "1", organism_4_name == "Streptococcus" ~ "1", organism_5_name == "Streptococcus" ~ "1"))
+Boxplot <- Boxplot %>% mutate('CONS' = case_when(organism_1_name == "Staphylococcus coagulase negative" ~ "1", organism_2_name == "Staphylococcus coagulase negative" ~ "1", organism_3_name == "Staphylococcus coagulase negative" ~ "1", organism_4_name == "Staphylococcus coagulase negative" ~ "1", organism_5_name == "Staphylococcus coagulase negative" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Escherichia' = case_when(organism_1_name == "Escherichia" ~ "1", organism_2_name == "Escherichia" ~ "1", organism_3_name == "Escherichia" ~ "1", organism_4_name == "Escherichia" ~ "1", organism_5_name == "Escherichia" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Klebsiella' = case_when(organism_1_name == "Klebsiella" ~ "1", organism_2_name == "Klebsiella" ~ "1", organism_3_name == "Klebsiella" ~ "1", organism_4_name == "Klebsiella" ~ "1", organism_5_name == "Klebsiella" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Enterococcus' = case_when(organism_1_name == "Enterococcus" ~ "1", organism_2_name == "Enterococcus" ~ "1", organism_3_name == "Enterococcus" ~ "1", organism_4_name == "Enterococcus" ~ "1", organism_5_name == "Enterococcus" ~ "1"))
+Boxplot <- Boxplot %>% mutate('Candida' = case_when(organism_1_name == "Candida" ~ "1", organism_2_name == "Candida" ~ "1", organism_3_name == "Candida" ~ "1", organism_4_name == "Candida" ~ "1", organism_5_name == "Candida" ~ "1"))
+
+df <- Boxplot %>% select(amylase, `Staphylococcus aureus`, Corynebacterium, Pseudomonas, Yeast, Streptococcus, `CONS`, Escherichia, Klebsiella, Enterococcus)
+df.m <- melt(df, id.var = "amylase")
+df.m <- df.m %>% mutate(value = replace_na(value, "Absent"))
+df.m$value[df.m$value=="1"] <- "Present"
+p <- ggplot(data = df.m, aes(x=value, y=log(amylase))) + theme(legend.position ="none") + geom_boxplot(aes(fill=value)) + scale_fill_brewer(palette="BuGn") + labs(x="Organism on BAL culture", y="BAL Amylase on Log Scale") + theme(legend.position ="none", strip.text.x = element_text(size = 10, face="bold.italic"))
+
+p1 <- p + facet_wrap( ~ variable, scales="free") 
+p1 <- p1 + geom_signif(comparisons=list(c("Absent", "Present")), map_signif_level = TRUE, tip_length = 0, y_position = 9,  textsize = 5)
+print(p1)
+```
+
+## Get stats for each organism and correct for multiple comparisons
+
+```{r, echo=FALSE}
+Boxplot <- Boxplot %>% mutate(`Staphylococcus aureus` = replace_na(`Staphylococcus aureus`, "Absent"))
+Boxplot <- Boxplot %>% mutate(Corynebacterium = replace_na(Corynebacterium, "Absent"))
+Boxplot <- Boxplot %>% mutate(Pseudomonas = replace_na(Pseudomonas, "Absent"))
+Boxplot <- Boxplot %>% mutate(Yeast = replace_na(Yeast, "Absent"))
+Boxplot <- Boxplot %>% mutate(Streptococcus = replace_na(Streptococcus, "Absent"))
+Boxplot <- Boxplot %>% mutate(`CONS` = replace_na(`CONS`, "Absent"))
+Boxplot <- Boxplot %>% mutate(Escherichia = replace_na(Escherichia, "Absent"))
+Boxplot <- Boxplot %>% mutate(Klebsiella = replace_na(Klebsiella, "Absent"))
+Boxplot <- Boxplot %>% mutate(Enterococcus = replace_na(Enterococcus, "Absent"))
+
+tapply(Boxplot$amylase, Boxplot$`Staphylococcus aureus`, summary)
+kruskal.test(amylase ~ `Staphylococcus aureus`, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Corynebacterium, summary)
+kruskal.test(amylase ~ Corynebacterium, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Pseudomonas, summary)
+kruskal.test(amylase ~ Pseudomonas, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Yeast, summary)
+kruskal.test(amylase ~ Yeast, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Streptococcus, summary)
+kruskal.test(amylase ~ Streptococcus, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$`CONS`, summary)
+kruskal.test(amylase ~ `CONS`, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Escherichia, summary)
+kruskal.test(amylase ~ Escherichia, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Klebsiella, summary)
+kruskal.test(amylase ~ Klebsiella, data = Boxplot)
+
+tapply(Boxplot$amylase, Boxplot$Enterococcus, summary)
+kruskal.test(amylase ~ Enterococcus, data = Boxplot)
+
+#Manually copy and paste the p values generated above and correct for multiple comparisons
+p_values <- c(0.03131, 4.675e-05, 0.0655, 8.037e-05, 0.0004524, 0.0005806, 0.9306, 0.1705, 0.0009606)
+p_adjusted <- p.adjust(p_values, method = "bonferroni")
+print(p_adjusted)
+```
+
+## Enter adjusted p values into text
+Staphylococcus aureus p = 0.28179000
+Corynebacterium p = 0.00042075
+Pseudomonas p = 0.58950000
+Yeast p = 0.00072333
+Streptococcus p = 0.00407160
+CONS p = 0.00522540
+Escherichia p = 1.00000000
+Klebsiella p = 1.00000000
+Enterococcus p = 0.00864540
+
+## Create heatmap and combine with faceted boxplots (Figure 2)
+```{r, echo=FALSE}
+bacteria <- df2_imp %>% select(organism_1_name, organism_2_name, organism_3_name, organism_4_name, organism_5_name, organism_6_name, Quartile)
+df.m <- melt(bacteria, id.var = "Quartile")
+df.m$Quartile <- as.factor(df.m$Quartile)
+df.m <- subset(df.m, value != 'NA')
+p2 <- df.m %>% count(value, Quartile, .drop=FALSE) %>% ggplot(aes(x=Quartile, y=value, fill=n)) +geom_tile() + geom_text(aes(label = n), color = "white", size = 3)+ theme_minimal() + labs(x = "BAL Amylase Quartile", y = "Organism from BAL culture") + scale_fill_viridis(discrete=FALSE, name="Count") + theme_ipsum() + theme(plot.title = element_text(size=14, face="bold"), axis.title.x = element_text(size=14, hjust=0.5), axis.text.y = element_text(face ="italic"), axis.title.y = element_text(size=14, hjust=0.5),  axis.title=element_text(size=14,face="bold"))
+
+#To combine Heatmap and Boxplots into one Figure
+ggarrange(p2, p1, labels = c("A", "B"), ncol = 2, nrow = 1)
+
+```
+

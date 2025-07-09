@@ -1,0 +1,75 @@
+---
+title: "Antibiotics"
+output: html_document
+date: "2025-05-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Grouping each patient by antibiotic receipt
+
+Start from the imputed dataframe (df2_imp) generated from the Table1.Rmd.
+
+If a patient received any anti-anaerobic therapy within 7 days after the BAL they are considered to have received anaerobic antibiotic therapy.
+
+```{r, echo = FALSE}
+
+library(dplyr)
+library(stats)
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+library(tidyverse)
+library(ggpubr)
+library(stats)
+library(lubridate)
+library(reshape2)
+library(patchwork)
+
+#Find patients in Amylase cohort who received anaerobic abx within 7d from BAL
+Received_antibiotics_d7 <- df2_imp[df2_imp$patient_ir_id %in% c(Antibiotics$irid),]
+Received_antibiotics_d7 <- merge(Received_antibiotics_d7, Antibiotics, by.x = "patient_ir_id", by.y = "irid")
+Received_antibiotics_d7$Days_from_BALtoabx <- time_length(Received_antibiotics_d7$administration_date - Received_antibiotics_d7$bal_dt, unit="days")
+Received_antibiotics_d7 <- subset(Received_antibiotics_d7, Days_from_BALtoabx <= 7)
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Piptazo = case_when(base_medication_name == 'Piperacillin Tazobactam' ~ "1"))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Piptazo = ifelse(is.na(Piptazo), 0, Piptazo))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Meropenem = case_when(base_medication_name == 'Meropenem' ~ "1"))
+Received_antibiotics_d7 <- Received_antibiotics_d7 %>% mutate(Meropenem = ifelse(is.na(Meropenem), 0, Meropenem))
+
+#Proportions Barplot for Antibiotics received for each quartile (1 count = 1 dose in a day)
+p <- ggplot(Received_antibiotics_d7, aes(x=group, fill=base_medication_name)) + geom_bar(stat = 'count', position = 'fill')
+p <- p + scale_fill_viridis_d() + theme_bw() + labs(fill= "Antibiotic Name", x="", y="Percentage", title="Antibiotics Received Within 7 Days of BAL") + theme(axis.text.x=element_text(size=14), axis.title.y=element_text(size=14), legend.position = "bottom", legend.text = element_text(size=14), legend.title = element_text(size=14), plot.title=element_text(hjust=0.5))
+
+print(p)
+
+#Find patients in Amylase cohort who DID NOT receive anaerobic abx within 7d from BAL
+No_antibiotics_d7 <- df2_imp[!df2_imp$patient_ir_id %in% c(Received_antibiotics_d7$patient_ir_id),]
+
+#Find patients in Amylase cohort who DID receive anaerobic abx within 7d from BAL
+Antibiotics_d7 <- df2_imp[df2_imp$patient_ir_id %in% c(Received_antibiotics_d7$patient_ir_id),]
+
+#Add an antibiotics column
+No_antibiotics_d7$Antibiotics <- c("No")
+Antibiotics_d7$Antibiotics <- c("Yes")
+
+#Merge Amylase_df patients with and without antibiotics
+Amylase_df_abx <- rbind(No_antibiotics_d7, Antibiotics_d7)
+
+#Find Number of Patients Who Did and Did Not Receive Antibiotics
+table(Amylase_df_abx$Antibiotics, Amylase_df_abx$group)
+
+#Get stats for anti-anaerobic treatment receipt based on amylase group
+abx <- table(Amylase_df_abx$Antibiotics, Amylase_df_abx$group)
+print(abx)
+fisher.test(abx)
+```
+
+
+
+
+
+
+
